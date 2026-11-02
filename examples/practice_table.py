@@ -15,8 +15,8 @@ out = sys.argv[1]
 os.makedirs(out, exist_ok=True)
 dev = Dv.fetch_fake("FakeFez")
 now = P.now_cet()
-PROBS = [("P1", dict(kind="clifford_random", n=20, k=4, seed=1)), ("P1", dict(kind="clifford_random", n=40, k=8, seed=2)),
-         ("P1", dict(kind="clifford_random", n=72, k=8, seed=3)), ("P2", dict(kind="cluster_parity", n=20)),
+PROBS = [("P1", dict(kind="clifford_stab", n=20, k=4, seed=1)), ("P1", dict(kind="clifford_stab", n=40, k=4, seed=1)),
+         ("P1", dict(kind="clifford_stab", n=72, k=8, seed=3)), ("P2", dict(kind="cluster_parity", n=20)),
          ("P2", dict(kind="cluster_parity", n=40)), ("P2", dict(kind="cluster_parity", n=72)),
          ("P3", dict(kind="kising_forward", n=20, L=4)), ("P3", dict(kind="kising_forward", n=20, L=8)),
          ("P4", dict(kind="sh6", n=40, D=12)), ("P5", dict(kind="echo", n=20, D=24))]
@@ -30,12 +30,12 @@ for k, (pid, job) in enumerate(PROBS):
     circ = qpy.load(open(os.path.join(runs, rec["export"]["qpy"]), "rb"))[0]
     row = dict(problem=pid, job={k_: v for k_, v in job.items() if k_ != "shots"}, q2=rec["echo"]["q2_circuits"][0],
                depth=circ.depth(), circuits=rep["user_job"]["circuits"], qpu_s=rep["user_job"]["qpu_seconds_model"])
-    if rec.get("answers") and job["kind"] == "clifford_random":
-        row["determined_sites"] = sum(1 for v in rec["answers"].values() for x in v if abs(abs(x) - 1) < 1e-9)
+    if job["kind"] == "clifford_stab":
+        row["read_stabilizers"] = [len(o[2]) for o in J.stab_observables(job)]  # weight of each read stabilizer
     try:
         sim.submit(rep["user_job"]["job"], "noiseless")
         (r,) = J.score(rep["user_job"]["job"], runs).values()
-        row["noiseless"] = {k_: r[k_] for k_ in ("right_on_determined", "size_on_undetermined", "mse", "right", "per_bit",
+        row["noiseless"] = {k_: r[k_] for k_ in ("signal", "right_on_determined", "size_on_undetermined", "mse", "right", "per_bit",
                                                   "rho4") if k_ in r}
     except ValueError as e:
         row["noiseless"] = f"not simulated: {str(e)[:80]}"

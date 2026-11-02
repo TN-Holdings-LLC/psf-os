@@ -1,5 +1,6 @@
 """Practice problems (Q1-Q4): computations whose answers are not trivial, each answer exact and recorded.
-P1 clifford_random, P2 cluster_parity (the owner's choice in place of GHZ), P3 kising_forward; P4 sh6 and P5 echo are
+P1 clifford_stab (fixed on 2 November: the read stabilizers of the random Clifford circuit; clifford_random, read
+site by site, is kept but cannot see a defect), P2 cluster_parity (the owner's choice in place of GHZ), P3 kising_forward; P4 sh6 and P5 echo are
 the existing kinds (tests T4)."""
 import json
 import os
@@ -26,6 +27,12 @@ def test_q1_answers_agree_by_two_independent_methods():
     for k, seed in ((4, 1), (8, 2)):
         j = dict(kind="clifford_random", n=12, k=k, seed=seed)
         assert _max_diff(J.exact_answers(j, IN), J.exact_answers(j, IN, method="statevector")) < 1e-9
+    for k, seed in ((4, 1), (8, 2), (6, 7)):
+        j = dict(kind="clifford_stab", n=12, k=k, seed=seed)
+        an = J.exact_answers(j, IN, method="analytic")  # sign of U Z_j U^dagger x (-1)^(input bit j), from the tableau
+        assert all(abs(abs(x) - 1) < 1e-12 for i in an for x in an[i])
+        assert _max_diff(an, J.exact_answers(j, IN)) < 1e-12
+        assert _max_diff(an, J.exact_answers(j, IN, method="statevector")) < 1e-9
     j = dict(kind="cluster_parity", n=12)
     assert _max_diff(J.exact_answers(j, IN, method="analytic"), J.exact_answers(j, IN, method="statevector")) < 1e-9
     assert _max_diff(J.exact_answers(j, IN, method="analytic"), J.exact_answers(j, IN)) < 1e-12
@@ -43,7 +50,9 @@ def _solve(dev, job, out, standard=True, reg=None, now=None, mode="noiseless", *
     return rep, r
 
 
-@pytest.mark.parametrize("job", [dict(kind="clifford_random", n=20, k=4, seed=1),
+@pytest.mark.parametrize("job", [dict(kind="clifford_stab", n=20, k=4, seed=1),
+                                 dict(kind="clifford_stab", n=40, k=8, seed=2),
+                                 dict(kind="clifford_random", n=20, k=4, seed=1),
                                  dict(kind="clifford_random", n=40, k=8, seed=2),
                                  dict(kind="cluster_parity", n=20),
                                  dict(kind="kising_forward", n=20, L=4),
@@ -52,7 +61,9 @@ def test_q2_full_score_without_noise(tmp_path, job):
     dev = Dv.fetch_fake("FakeFez")
     rep, r = _solve(dev, dict(job, shots=2000), str(tmp_path / "p"))
     assert rep["accepted"]
-    if job["kind"] == "clifford_random":
+    if job["kind"] == "clifford_stab":
+        assert r["signal"] == 1.0 and r["right"] == 1.0 and len(r["observables"]) >= 2
+    elif job["kind"] == "clifford_random":
         # most sites have answer 0 (an entangled output); the few determined ones must all be right
         assert r["right_on_determined"] in (None, 1.0) and r["size_on_undetermined"] < 0.1
     elif job["kind"] == "cluster_parity":
@@ -82,12 +93,15 @@ def test_q3_planted_defects_standard_against_avoiding(tmp_path):
         R.save(reg, base)
     reg = R.load(base)
     rows = {}
-    for job in (dict(kind="clifford_random", n=40, k=4, seed=1, shots=1000), dict(kind="cluster_parity", n=40, shots=1000)):
+    for job in (dict(kind="clifford_random", n=40, k=4, seed=1, shots=1000), dict(kind="cluster_parity", n=40, shots=1000),
+                dict(kind="clifford_stab", n=40, k=4, seed=1, shots=1000)):
         _, std = _solve(dev, job, str(tmp_path / f"std_{job['kind']}"), mode="pauli", planted=planted, p=0.15,
                         kind="depol2")
         _, av = _solve(dev, job, str(tmp_path / f"av_{job['kind']}"), standard=False, reg=reg, now=now, mode="pauli",
                        planted=planted, p=0.15, kind="depol2")
-        if job["kind"] == "clifford_random":
+        if job["kind"] == "clifford_stab":
+            rows[job["kind"]] = dict(signal=(std["signal"], av["signal"]), weights=std["weights"])
+        elif job["kind"] == "clifford_random":
             rows[job["kind"]] = dict(right_on_determined=(std["right_on_determined"], av["right_on_determined"]),
                                      n_determined=std["n_determined"],
                                      size_on_undetermined=(std["size_on_undetermined"], av["size_on_undetermined"]),
@@ -98,6 +112,8 @@ def test_q3_planted_defects_standard_against_avoiding(tmp_path):
     # P2 must improve. P1 is recorded, not asserted: with 3 determined sites of 40 (k = 4, seed 1) and every other
     # answer 0, its score cannot see a defect (noise also gives <Z> = 0 on undetermined sites); see the report.
     assert rows["cluster_parity"]["right"][1] > rows["cluster_parity"]["right"][0]
+    # P1 fixed (read stabilizers, every answer +-1) sees the defect: 0.964 -> 1.000 at home on 2 November
+    assert rows["clifford_stab"]["signal"][1] > rows["clifford_stab"]["signal"][0]
 
 
 def test_q4_problems_read_no_map(tmp_path):
@@ -106,7 +122,8 @@ def test_q4_problems_read_no_map(tmp_path):
     b = fake_provider.FakeFez()
     dev = Dv.from_target(Guarded(b.target), b.name, fake=True)
     now = P.now_cet()
-    for k, job in enumerate((dict(kind="clifford_random", n=40, k=4, seed=1), dict(kind="cluster_parity", n=72),
+    for k, job in enumerate((dict(kind="clifford_random", n=40, k=4, seed=1), dict(kind="clifford_stab", n=40, k=4, seed=1),
+                             dict(kind="cluster_parity", n=72),
                              dict(kind="kising_forward", n=20, L=4))):
         rep = P.plan(dev, dict(job, shots=100), R.empty(), str(tmp_path / f"p{k}"), now, standard=True)
         assert rep["accepted"]

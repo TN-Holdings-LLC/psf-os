@@ -258,8 +258,9 @@ def clifford_random_layers(n, k, seed):
     return np.random.default_rng(seed).integers(0, len(CLIFFORD_1Q), size=(k + 1, n)).tolist()
 
 
-def clifford_random_circuit(bits, n, k, seed):
-    """OS practice problem P1: X on the input bits, then k x (a random single-qubit Clifford on every qubit, CZ ring),
+def clifford_random_circuit(bits, n, k, seed, measure=True):
+    """OS practice problem P1 (superseded on 2 November by clifford_stab: read site by site, most answers are 0 and a
+    broken device also gives 0, so this form cannot see a defect; kept for the records): X on the input bits, then k x (a random single-qubit Clifford on every qubit, CZ ring),
     then one more random Clifford layer, measure all. The draw depends on (n, k, seed) only, not on the input."""
     from qiskit import QuantumCircuit
     lay = clifford_random_layers(n, k, seed)
@@ -276,6 +277,51 @@ def clifford_random_circuit(bits, n, k, seed):
     for q in range(n):
         for g in CLIFFORD_1Q[lay[k][q]]:
             getattr(qc, g)(q)
+    if measure:
+        qc.measure_all()
+    return qc
+
+
+def clifford_stab_observables(n, k, seed, offset=0, max_weight=None):
+    """OS practice problem P1 (fixed, owner 2026-11-02): the output of clifford_random_circuit is stabilized by
+    S_j = U Z_j U^dagger (U the random Clifford part, input X's left out), with the sign (-1)^(input bit j).
+    Returns [(j, sign, sites, letters)] for a set of S_j (sign: that of U Z_j U^dagger as a Pauli) with pairwise disjoint supports, taken greedily around the ring from
+    site `offset`, so that all of them are read in one shot by single-qubit basis changes. Each S_j acts within the
+    light cone of site j (at most 2k + 1 sites), so about n / (2k + 1) are taken. `letters` is the Pauli on each site.
+    Exact by construction (Clifford tableau), no search."""
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Clifford, Pauli
+    u = clifford_random_circuit([0] * n, n, k, seed, measure=False)
+    cl = Clifford(u)
+    used, out = set(), []
+    for t in range(n):
+        j = (offset + t) % n
+        lab = Pauli("I" * (n - 1 - j) + "Z" + "I" * j).evolve(cl, frame="s").to_label()
+        sign = -1 if lab.startswith("-") else 1
+        lab = lab.lstrip("-")
+        if lab[0] == "i" or len(lab) != n:
+            raise RuntimeError("a non-Hermitian image; not expected for a Clifford")
+        sites = [q for q in range(n) if lab[n - 1 - q] != "I"]
+        if max_weight is not None and len(sites) > max_weight:
+            continue
+        if used.isdisjoint(sites):
+            used.update(sites)
+            out.append((j, sign, sites, "".join(lab[n - 1 - q] for q in sites)))
+    return out
+
+
+def clifford_stab_circuit(bits, n, k, seed, observables):
+    """P1 (fixed): clifford_random_circuit without its measurement, then on every site of every observable the
+    single-qubit change that reads its Pauli as Z (X: H; Y: Sdg, H), then measure all. The parity of the bits on an
+    observable's sites is then exactly sign x (-1)^(input bit j) for S_j."""
+    qc = clifford_random_circuit(bits, n, k, seed, measure=False)
+    for _j, _sign, sites, letters in observables:
+        for q, P in zip(sites, letters):
+            if P == "X":
+                qc.h(q)
+            elif P == "Y":
+                qc.sdg(q)
+                qc.h(q)
     qc.measure_all()
     return qc
 
