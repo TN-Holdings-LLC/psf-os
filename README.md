@@ -1,5 +1,7 @@
 # psf-os
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
 A self-checking layer between a ring circuit and an IBM heavy-hex device, without the calibration map.
 
 It tests its own rings with a mirror echo, keeps a list of the paths it found dead, and places the next ring around
@@ -7,8 +9,6 @@ them. It does not read a calibration quality number: it uses the coupling graph 
 
 **Status.** Skeleton for milestone M5 of the OS plan (TOQB `prereg/drafts-2026-11-01/os_plan_DRAFT.md`). It is
 not declared, and no performance is claimed. The experiments behind it, and their records, live in TOQB.
-
-**License.** To be decided.
 
 ## Layers
 
@@ -35,3 +35,8 @@ any of them is the owner's decision.
 | test | what it checks |
 |---|---|
 | T1 | the registry made from TOQB's device records equals TOQB's `list_after.json`, byte for byte |
+| T2 | on FakeKingston, FakeMarrakesh and FakeFez, n = 20, 40, 72, with and without a mask: the same physical ring and two-qubit count as TOQB's `kising_echo build --arm fold:rule` |
+
+Code ported from TOQB (same rights holder) says so at the top of each file.
+
+AGPL v3. See `LICENSE`.
