@@ -132,11 +132,13 @@ def assemble(dev, runs, out, max_seconds=60):
     os.makedirs(out)
     with open(os.path.join(out, "circuits.qpy"), "wb") as f:
         qpy.dump(circuits, f)
-    man = dict(written=dt.datetime.now().astimezone().isoformat(timespec="seconds"), device=dev.to_json(),
+    from zoneinfo import ZoneInfo
+    man = dict(written=dt.datetime.now(ZoneInfo("Europe/Zurich")).isoformat(timespec="seconds"), device=dev.to_json(),
                fetch=dict(backend=dev.name, fake=dev.fake), cells=cells, pubs=pubs, shots=shots,
                circuits_sha256=sha256_file(os.path.join(out, "circuits.qpy")),
                qpy_sha256=sha256_file(os.path.join(out, "circuits.qpy")),  # the key TOQB s2rc_device submit checks
-               qpu_seconds_model=round(seconds, 1))
+               qpu_seconds_model=round(seconds, 1),
+               stay=True)  # placed for this device's registry: TOQB's submit never moves it (TOQB job_stays)
     json.dump(man, open(os.path.join(out, "manifest.json"), "w"), indent=1)
     return man
 

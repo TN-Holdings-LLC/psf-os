@@ -2,6 +2,7 @@
 with the failed mark (>= 1) and any other use of it, any gate duration and any qubit property (T1, T2, frequency)
 raises. The whole chain (fetch, plan with and without a registry, compile, assemble) runs through it."""
 import json
+import re
 
 import pytest
 
@@ -100,8 +101,10 @@ def test_chain_reads_no_map(tmp_path):
     assert (dev.couplers, dev.failed_couplers, dev.failed_qubits) == (plain.couplers, plain.failed_couplers,
                                                                      plain.failed_qubits)
     text = json.dumps(dev.to_json())
+    # ISO times are removed first: "2026-11-02T10:15" must not count as "t1"
+    bare = re.sub(r"\d{4}-\d{2}-\d{2}t\d{2}:\d{2}(:\d{2})?", "", text.lower())
     for word in ("error", "duration", "t1", "t2", "frequency", "readout"):
-        assert word not in text.lower()
+        assert word not in bare, word
     t = Dv.map_free_target(dev)
     assert t.qubit_properties is None
     assert all(p is None for name in t.operation_names for p in t[name].values())

@@ -28,3 +28,20 @@ def test_toqb_submit_local_runs_a_psfos_job(tmp_path):
     assert p.returncode == 0, p.stdout + p.stderr
     (r,) = J.score(rep["user_job"]["job"], rep["user_job"]["runs"]).values()
     assert r["per_bit"] == 1.0
+
+
+def test_psfos_manifest_makes_toqb_submit_stay(tmp_path):
+    """Every psf-os job says "stay": true, and TOQB's submit reads it as --stay (owner, 2026-11-02): a job placed
+    around one device's registry is never moved to another device, even if the flag is forgotten."""
+    import json
+    dev = Dv.fetch_fake("FakeFez")
+    rep = P.plan(dev, dict(kind="sh6", n=20, D=6, shots=100), R.empty(), str(tmp_path / "p"), P.now_cet(),
+                 standard=True)
+    man = json.load(open(os.path.join(rep["user_job"]["job"], "manifest.json")))
+    assert man["stay"] is True
+    sys.path.insert(0, TQ)
+    try:
+        from toqb import s2rc_device as SD
+        assert SD.job_stays(False, man)
+    finally:
+        sys.path.remove(TQ)

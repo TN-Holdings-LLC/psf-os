@@ -77,7 +77,8 @@ def failed_elements(target):
 
 def from_target(target, name, fake=False, source=None):
     all_c, failed_c, failed_q = failed_elements(target)
-    now = dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+    from zoneinfo import ZoneInfo
+    now = dt.datetime.now(ZoneInfo("Europe/Zurich")).isoformat(timespec="seconds")  # records are in CET (owner)
     return Device(name=name, num_qubits=target.num_qubits, couplers=[list(e) for e in all_c],
                   failed_couplers=[list(e) for e in failed_c], failed_qubits=list(failed_q), fake=fake, fetched=now,
                   source=dict(source or {}))
