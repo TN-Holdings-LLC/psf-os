@@ -36,6 +36,30 @@ any of them is the owner's decision.
 |---|---|
 | T1 | the registry made from TOQB's device records equals TOQB's `list_after.json`, byte for byte |
 | T2 | on FakeKingston, FakeMarrakesh and FakeFez, n = 20, 40, 72, with and without a mask: the same physical ring and two-qubit count as TOQB's `kising_echo build --arm fold:rule` |
+| T3 | on FakeFez in simulation (Aer stabilizer, the echo at its Clifford point h = pi/4, a ZZ Pauli error of 0.15 after every CZ on three planted couplers known only to the test): two scans list the two planted couplers that lie on standard rings, the mask hits exactly those couplers, and the usable sites grow (n = 40: 24 -> 40, n = 72: 56 -> 72) |
+| T4 | the sh6 identity (OS plan M3, second form) and the echo, entered through the L6 interface on three fake devices, return every bit without noise |
+| T5 | the frame flip leaves the ideal circuit unchanged (operator equality); the repair rules |
+| T6 | the chain runs through a Target wrapper that lets an error value be compared only with the failed mark and raises on any other quality read; the device record and the compiler's Target hold no quality number |
+| ported | 31 of TOQB's tests (defect_list, safe_loop, qca, kising_echo, echo_tomo) on the ported code |
+
+## Commands
+
+```
+psf-os fetch --backend fake:FakeFez --out DEV
+psf-os plan --device DEV --job job.json --registry REG.json --out RUN     # no scan today -> a scan job first
+psf-os submit --job RUN/scan/job --local                                  # fake devices only in M5
+psf-os scan-ingest --device DEV --job RUN/scan/job --runs RUN/scan/runs --registry REG.json --out REG2.json --label s1
+psf-os plan --device DEV --job job.json --registry REG2.json --out RUN2   # avoid, place, assemble
+psf-os status --registry REG2.json
+psf-os result --job RUN2/job/job --runs RUN2/job/runs
+```
+
+`job.json`: `{"kind": "sh6", "n": 40, "D": 12, "shots": 1000}` (kinds: echo, sh6, qca).
+
+## Not in M5
+
+The IBM submission (`submit` without `--local`), sentinels (M6, interface only), repair discovery (M7), the Rust core
+(M8), a resident service.
 
 Code ported from TOQB (same rights holder) says so at the top of each file.
 

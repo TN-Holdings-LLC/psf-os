@@ -101,6 +101,38 @@ def echo_circuit(bits, n, L, h=0.6, hz=0.0):
     return model_circuit(echo_angles(bits, n, L, h, hz), n, 2 * L)
 
 
+def _clifford_gates(V):
+    """A 2x2 Clifford block as a list of parameterless gate names (h, s, sdg, x, y, z, ...), in time order."""
+    from qiskit.quantum_info import Clifford, Operator
+    from qiskit import QuantumCircuit
+    qc = QuantumCircuit(1)
+    qc.unitary(Operator(V), [0])
+    return [i.operation.name for i in Clifford(qc).to_circuit().data]
+
+
+def echo_clifford_circuit(bits, n, L):
+    """The same mirror echo at h = pi/4, hz = 0 (the kicked Ising ring at its Clifford point), written with
+    parameterless Clifford gates so that a stabilizer simulator can run it at any size. For simulation tests only:
+    the scan itself uses h = 0.6."""
+    from qiskit import QuantumCircuit
+    V = [_clifford_gates(B) for B in blocks(L, np.pi / 4, 0.0)]
+    qc = QuantumCircuit(n)
+    for q in range(n):
+        if bits[q]:
+            qc.x(q)
+    for k in range(1, 2 * L + 1):
+        for q in range(n):
+            for g in V[k - 1]:
+                getattr(qc, g)(q)
+        for q in range(n):
+            qc.cz(q, (q + 1) % n)
+    for q in range(n):
+        for g in V[2 * L]:
+            getattr(qc, g)(q)
+    qc.measure_all()
+    return qc
+
+
 def frame_flip(qc, n, sites=None):
     """X on chosen ring positions just before and after the CZ ring of every even layer, plus the virtual Z that keeps
     the ideal circuit unchanged (see TOQB toqb/kising_echo.py frame_flip). Positions must not be ring neighbours."""

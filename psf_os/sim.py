@@ -2,6 +2,8 @@
 
 - `noiseless`: the ideal circuit. Clifford circuits (sh6, qca, references) run on Aer's stabilizer method, so the
   full 156-qubit layout is no problem; others run on the statevector of the active qubits only.
+- `pauli`: Clifford circuits on the stabilizer method with a ZZ Pauli error of probability p after every CZ on chosen
+  physical couplers (stochastic, per shot). Used with the Clifford-point echo, so the full 72-qubit rings run.
 - `planted`: the ideal circuit plus a coherent ZZ rotation RZZ(theta) after every CZ on chosen physical couplers.
   It stays unitary, so one statevector per circuit is enough. The planted couplers are given by the caller (a test);
   nothing in psf-os's decision path sees them.
@@ -22,6 +24,9 @@ def _stamp():
     now = dt.datetime.now(dt.timezone.utc)
     loc = now.astimezone(ZoneInfo("Europe/Zurich"))
     return f"{now.isoformat(timespec='seconds')} ({loc.strftime('%Y-%m-%d %H:%M:%S')} CET)"
+
+
+MAX_STATEVECTOR = 28
 
 
 def compact(circ):
@@ -78,9 +83,28 @@ def with_planted_zz(circ, couplers, theta):
     return out
 
 
-def run_circuits(circs, shots, seed=0, planted=None, theta=0.0):
+def pauli_noise(couplers, p):
+    from qiskit_aer.noise import NoiseModel, pauli_error
+    nm = NoiseModel(basis_gates=["cz", "sx", "x", "rz", "s", "sdg", "z", "h", "measure"])
+    err = pauli_error([("ZZ", p), ("II", 1 - p)])
+    for a, b in couplers:
+        nm.add_quantum_error(err, ["cz"], [a, b])
+        nm.add_quantum_error(err, ["cz"], [b, a])
+    return nm
+
+
+def run_circuits(circs, shots, seed=0, planted=None, theta=0.0, pauli=None):
     from qiskit_aer import AerSimulator
     rows = []
+    if pauli is not None:
+        nm = pauli_noise(*pauli)
+        for k, c in enumerate(circs):
+            cc = to_clifford_gates(c)
+            if cc is None:
+                raise ValueError("the pauli mode needs Clifford circuits")
+            res = AerSimulator(method="stabilizer", noise_model=nm).run(cc, shots=shots, seed_simulator=seed + k).result()
+            rows.append(dict(pub=k, counts=dict(res.get_counts(0))))
+        return rows
     for k, c in enumerate(circs):
         if planted:
             c = with_planted_zz(c, planted, theta)
@@ -88,14 +112,18 @@ def run_circuits(circs, shots, seed=0, planted=None, theta=0.0):
         if cc is not None:
             sim, run_c = AerSimulator(method="stabilizer"), cc
         else:
-            run_c, _ = compact(c)
+            run_c, act = compact(c)
+            if len(act) > MAX_STATEVECTOR:
+                raise ValueError(f"circuit {k} is not Clifford and has {len(act)} active qubits (over "
+                                 f"{MAX_STATEVECTOR}): it cannot be run locally. Scan n = 20 only (--scan-sizes 20), "
+                                 "or use the Clifford-point scan for dry runs (--scan-clifford)")
             sim = AerSimulator(method="statevector")
         res = sim.run(run_c, shots=shots, seed_simulator=seed + k).result()
         rows.append(dict(pub=k, counts=dict(res.get_counts(0))))
     return rows
 
 
-def submit(job_dir, mode="noiseless", seed=20261102, planted=None, theta=0.0):
+def submit(job_dir, mode="noiseless", seed=20261102, planted=None, theta=0.0, p=0.0):
     """Run the job's circuits locally and write raw_counts.json and submission.json (the device's format)."""
     from qiskit import qpy
     sub = os.path.join(job_dir, "submission.json")
@@ -103,7 +131,8 @@ def submit(job_dir, mode="noiseless", seed=20261102, planted=None, theta=0.0):
         raise FileExistsError(f"{sub} exists: this job was already run")
     man = json.load(open(os.path.join(job_dir, "manifest.json")))
     circs = qpy.load(open(os.path.join(job_dir, "circuits.qpy"), "rb"))
-    rows = run_circuits(circs, man["shots"], seed, planted if mode == "planted" else None, theta)
+    rows = run_circuits(circs, man["shots"], seed, planted if mode == "planted" else None, theta,
+                        pauli=(planted, p) if mode == "pauli" else None)
     t = _stamp()
     json.dump(dict(job_id=f"local-{mode}-{seed}", submitted=t, local=True, backend=man["fetch"]["backend"],
                    simulator=f"aer {mode}"), open(sub, "w"), indent=1)

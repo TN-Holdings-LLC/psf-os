@@ -24,14 +24,14 @@ def _report(out, rep):
     return rep
 
 
-def scan_job(dev, out, sizes=SCAN_SIZES):
+def scan_job(dev, out, sizes=SCAN_SIZES, spec=None):
     """The L1 scan: the rule's standard rings (no mask), the echo at D = 24, one record per size that places."""
     runs = os.path.join(out, "scan", "runs")
     built, refused = [], {}
     rc = RuleCompiler(dev)
     for n in sizes:
         try:
-            J.build(dev, dict(SCAN_JOB, n=n), runs, compiler=rc)
+            J.build(dev, dict(spec or SCAN_JOB, n=n), runs, compiler=rc)
             built.append(n)
         except Exception as e:  # noqa: BLE001  (a size that does not place is reported, not replaced)
             refused[n] = f"{type(e).__name__}: {e}"
@@ -42,7 +42,7 @@ def scan_job(dev, out, sizes=SCAN_SIZES):
                 job=os.path.join(out, "scan", "job"), runs=runs)
 
 
-def plan(dev, logical, reg, out, now, standard=False, scan_sizes=SCAN_SIZES):
+def plan(dev, logical, reg, out, now, standard=False, scan_sizes=SCAN_SIZES, scan_spec=None):
     """Returns the report. `reg` is a registry dict (R.load / R.empty()); `standard` skips the registry entirely."""
     if os.path.exists(os.path.join(out, "report.json")):
         raise FileExistsError(f"{out} already holds a plan")
@@ -51,7 +51,9 @@ def plan(dev, logical, reg, out, now, standard=False, scan_sizes=SCAN_SIZES):
     if not standard and (R.is_stale(reg, dev.name, now)):
         rep["category"] = "scan first"
         rep["why"] = f"no scan of {dev.name} on {now.date().isoformat()} in the registry"
-        rep["scan"] = scan_job(dev, out, scan_sizes)
+        rep["scan"] = scan_job(dev, out, scan_sizes, spec=scan_spec)
+        if scan_spec:
+            rep["scan"]["spec"] = scan_spec
         rep["next"] = ["psf-os submit --job " + rep["scan"]["job"],
                        "psf-os scan-ingest --job ... --runs ... --registry REG --out NEW_REG",
                        "psf-os plan again with NEW_REG"]

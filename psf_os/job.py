@@ -26,13 +26,15 @@ from psf_os.compile import VERSION, RuleCompiler, measured_qubits
 from psf_os.registry import sha256_file
 from psf_os.scan import INPUTS, input_bits
 
-KINDS = ("echo", "sh6", "qca")
+KINDS = ("echo", "sh6", "qca", "echo_clifford")
 
 
 def cell_name(job):
     if job["kind"] == "echo":
         tag = f"_lf{''.join(map(str, job['flip']))}" if job.get("flip") else ""
         return f"kecho_n{job['n']}_D{job['D']}_hz{job.get('hz', 0.0):g}_h{job.get('h', 0.6):g}-fold_rule{tag}"
+    if job["kind"] == "echo_clifford":
+        return f"kecho_n{job['n']}_D{job['D']}_hz0_h0.785398-fold_rule"
     if job["kind"] == "sh6":
         return f"kqsh_n{job['n']}_D{job['D']}-fold_rule"
     return f"kqca_n{job['n']}_D{job['n']}-fold_rule"
@@ -47,6 +49,8 @@ def logical_circuit(job, bits):
         if job.get("flip"):
             qc = C.frame_flip(qc, n, job["flip"])
         return qc
+    if job["kind"] == "echo_clifford":
+        return C.echo_clifford_circuit(bits, n, job["D"] // 2)
     if job["kind"] == "sh6":
         return C.sh6_circuit(bits, n, job["D"])
     if job["kind"] == "qca":
@@ -90,7 +94,7 @@ def build(dev, job, runs, compiler=None):
                echo=dict(D=D, kind=job["kind"], inputs=inputs, measured_qubits={str(k): v for k, v in sorted(meas0.items())},
                          q2_per_layer=per, q2_circuits=q2s, accepted=bool(accepted), placement=dict(rc.last)),
                points=points, inputs=[input_bits(p["input"], job["n"]) for p in points],
-               qca_test=job["kind"] != "echo", valid=bool(accepted), shots=job.get("shots", 1000),
+               qca_test=job["kind"] in ("sh6", "qca"), valid=bool(accepted), shots=job.get("shots", 1000),
                export=dict(qpy=os.path.basename(qf), circuits=len(cs), sha256=sha256_file(qf)))
     json.dump(rec, open(jf, "w"), indent=1)
     return rec
