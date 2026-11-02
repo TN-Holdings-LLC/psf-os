@@ -60,7 +60,7 @@ psf-os result --job RUN2/job/job --runs RUN2/job/runs
 ## Not in M5
 
 The IBM submission inside psf-os (`submit` without `--local`; for now jobs go through TOQB's `s2rc_device submit`,
-owner's decision of 2 November, and a result from another device than the one the job was placed for is refused), sentinels (M6, interface only), repair discovery (M7), the Rust core
+owner's decision of 2 November, always with `--stay` (TOQB 904e78f) so that a job is never moved to another device; if the job's own device has a failed element under it, nothing is sent and the job is planned again from a new fetch. A result from another device than the one the job was placed for is refused), sentinels (M6, interface only), repair discovery (M7), the Rust core
 (M8), a resident service.
 
 Code ported from TOQB (same rights holder) says so at the top of each file.
