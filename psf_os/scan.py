@@ -1,7 +1,8 @@
 """L1: reading the health scan. The rule's mirror echo, read per ring site, and its dead and weak runs.
 
 Ported from TOQB toqb/defect_list.py (site_signal, job_profiles, dead_runs, centre_path, contains_path, usable,
-observe) and toqb/safe_loop.py (weak_runs, scan_job) at 8d44f05. The arithmetic is kept identical so that the
+coverage_verdict, path_present, observe), toqb/safe_loop.py (weak_runs, scan_job), toqb/kising_echo.py (input_values,
+estimate) and toqb/kising_charge.py (ratio) at 8d44f05. The arithmetic is kept identical so that the
 registry made here matches TOQB's lists exactly (test T1).
 
 A job folder is TOQB's format: manifest.json (cells, pubs), raw_counts.json[.gz] (rows), submission.json; the run
@@ -180,3 +181,70 @@ def weak_scan(device, job, runs, label, thr=RULES["dead_threshold"], rel=RULES["
                                    centre=list(centre_path(phys, s, L, width)),
                                    mean=float(np.mean([a[(s + t) % n] for t in range(L)]))) for s, L in rs]))
     return out
+
+
+# ------------------------------------------------------------------------------------------------ the echo ratio and coverage
+
+def ratio(num, var_num, den, var_den):
+    """rho = num / den and its delta-method SE (num and den independent)."""
+    r = num / den
+    return r, float(np.sqrt(var_num + r * r * var_den) / abs(den))
+
+
+def _z(bits_key, n):
+    k = bits_key.replace(" ", "")
+    return np.array([1 - 2 * int(k[-1 - q]) for q in range(n)])
+
+
+def input_values(counts, zin, flipped, n):
+    """(m, var m, m2, var m2) of one circuit's counts: m = sum_j s_j Z_j with s = -z (echo) or z (reference),
+    m2 = sum_j z_j z_j+1 Z_j Z_j+1."""
+    s = -zin if flipped else zin
+    w2 = zin * np.roll(zin, -1)
+    vals, vals2, cnt = [], [], []
+    for key, c in counts.items():
+        z = _z(key, n)
+        vals.append(float(np.sum(s * z)))
+        vals2.append(float(np.sum(w2 * z * np.roll(z, -1))))
+        cnt.append(c)
+    vals, vals2, cnt = np.array(vals), np.array(vals2), np.array(cnt, float)
+    N = cnt.sum()
+
+    def mv(v):
+        m = float(np.sum(v * cnt) / N)
+        return m, (float(np.sum(cnt * (v - m) ** 2) / (N - 1)) / N if N > 1 else float("nan"))
+    m, vm = mv(vals)
+    m2, vm2 = mv(vals2)
+    return m, vm, m2, vm2
+
+
+def estimate(cell_counts, n):
+    """cell_counts: {(input, "echo" | "ref"): counts}. rho_E (weight 1) and rho_E2 (weight 2) with SE."""
+    num = vnum = den = vden = num2 = vnum2 = den2 = vden2 = 0.0
+    per = {}
+    for i in INPUTS:
+        zin = 1 - 2 * np.array(input_bits(i, n))
+        m, vm, m2, vm2 = input_values(cell_counts[(i, "echo")], zin, True, n)
+        r, vr, r2, vr2 = input_values(cell_counts[(i, "ref")], zin, False, n)
+        num, vnum, den, vden = num + m, vnum + vm, den + r, vden + vr
+        num2, vnum2, den2, vden2 = num2 + m2, vnum2 + vm2, den2 + r2, vden2 + vr2
+        per[i] = dict(m=m, ref=r)
+    rho, se = ratio(num, vnum, den, vden)
+    rho2, se2 = ratio(num2, vnum2, den2, vden2)
+    return dict(rho4=rho, se4=se, rho_w2=rho2, se_w2=se2, per_input=per)
+
+
+def coverage_verdict(u_a, u_b, margin=3):
+    """WIDER: the avoiding ring keeps at least `margin` more usable sites than the standard ring at the same n;
+    NARROWER: at least `margin` fewer; SAME otherwise (margin = the shortest dead run)."""
+    d = u_b - u_a
+    return "WIDER" if d >= margin else "NARROWER" if d <= -margin else "SAME"
+
+
+def path_present(phys, a, path, thr=0.12, min_len=3, need=2):
+    """True if a dead run of this ring holds at least `need` qubits of the path."""
+    n = len(phys)
+    for st, ln in dead_runs(np.asarray(a), thr, min_len):
+        if len({phys[(st + t) % n] for t in range(ln)} & set(path)) >= need:
+            return True
+    return False
