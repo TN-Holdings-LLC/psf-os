@@ -73,11 +73,11 @@ def _zyz(V):
     return float(p), float(t), float(l)
 
 
-def echo_angles(bits, n, L, h, hz):
-    if L < 1:
-        raise ValueError("L >= 1")
-    V = [_zyz(B) for B in blocks(L, h, hz)]
-    D = 2 * L
+def block_angles(bits, n, V):
+    """The model_circuit angle list for single-qubit blocks V_0 .. V_D (2x2, the same on every qubit) around D CZ
+    rings, on input `bits` (X where the bit is 1, folded into the first layer)."""
+    V = [_zyz(B) for B in V]
+    D = len(V) - 1
     rz_slot = [0.0] * (D + 1)
     for k in range(1, D + 1):
         rz_slot[k] += V[k - 1][0] + V[k][2]
@@ -94,6 +94,27 @@ def echo_angles(bits, n, L, h, hz):
                 a += [0.0, rz_slot[k]]
     a += [V[D][1]] * n
     return a
+
+
+def echo_angles(bits, n, L, h, hz):
+    if L < 1:
+        raise ValueError("L >= 1")
+    return block_angles(bits, n, blocks(L, h, hz))
+
+
+def forward_blocks(L, h, hz=0.0):
+    """The L + 1 blocks of L forward kicked-Ising steps S = (RX(2h) Z RZ(2 hz))^n CZ_ring (no mirror)."""
+    theta, phi, lamp = step_angles(h, hz)
+    A = _rz(phi) @ _ry(theta)
+    R = _rz(lamp)
+    return [R] + [R @ A] * (L - 1) + [A]
+
+
+def kising_forward_circuit(bits, n, L, h=0.6, hz=0.0):
+    """L forward steps of the kicked Ising ring on input `bits` (OS practice problem P3; not Clifford)."""
+    if L < 1:
+        raise ValueError("L >= 1")
+    return model_circuit(block_angles(bits, n, forward_blocks(L, h, hz)), n, L)
 
 
 def echo_circuit(bits, n, L, h=0.6, hz=0.0):
@@ -224,3 +245,56 @@ def reference_circuit(compiled, bits):
 
 def q2_count(c):
     return sum(1 for i in c.data if len(i.qubits) == 2 and i.operation.name not in ("barrier", "measure"))
+
+
+# The 24 single-qubit Cliffords as gate lists (time order): 6 frames x 4 Paulis.
+_FRAMES = ([], ["h"], ["s"], ["h", "s"], ["s", "h"], ["h", "s", "h"])
+_PAULIS = ([], ["x"], ["y"], ["z"])
+CLIFFORD_1Q = [f + p for f in _FRAMES for p in _PAULIS]
+
+
+def clifford_random_layers(n, k, seed):
+    """(k + 1) x n indices into CLIFFORD_1Q, drawn from numpy's default_rng(seed)."""
+    return np.random.default_rng(seed).integers(0, len(CLIFFORD_1Q), size=(k + 1, n)).tolist()
+
+
+def clifford_random_circuit(bits, n, k, seed):
+    """OS practice problem P1: X on the input bits, then k x (a random single-qubit Clifford on every qubit, CZ ring),
+    then one more random Clifford layer, measure all. The draw depends on (n, k, seed) only, not on the input."""
+    from qiskit import QuantumCircuit
+    lay = clifford_random_layers(n, k, seed)
+    qc = QuantumCircuit(n)
+    for q in range(n):
+        if bits[q]:
+            qc.x(q)
+    for t in range(k):
+        for q in range(n):
+            for g in CLIFFORD_1Q[lay[t][q]]:
+                getattr(qc, g)(q)
+        for q in range(n):
+            qc.cz(q, (q + 1) % n)
+    for q in range(n):
+        for g in CLIFFORD_1Q[lay[k][q]]:
+            getattr(qc, g)(q)
+    qc.measure_all()
+    return qc
+
+
+def cluster_parity_circuit(bits, n):
+    """OS practice problem P2 (owner's choice of 2 November, in place of a GHZ state, which needs partial CZ layers):
+    X on the input bits, H on all, one CZ ring (the ring cluster state), H on all, measure all. The product of the
+    cluster stabilizers X_j Z_{j-1} Z_{j+1} over the ring is X^n (each Z appears twice), so the parity of all bits read
+    in X is exactly (-1)^(sum of the input bits), a weight-n quantity; every single bit is random."""
+    from qiskit import QuantumCircuit
+    qc = QuantumCircuit(n)
+    for q in range(n):
+        if bits[q]:
+            qc.x(q)
+    for q in range(n):
+        qc.h(q)
+    for q in range(n):
+        qc.cz(q, (q + 1) % n)
+    for q in range(n):
+        qc.h(q)
+    qc.measure_all()
+    return qc

@@ -83,10 +83,19 @@ def with_planted_zz(circ, couplers, theta):
     return out
 
 
-def pauli_noise(couplers, p):
+def pauli_noise(couplers, p, kind="zz"):
+    """kind "zz": a ZZ error of probability p after each CZ on the couplers; "depol2": each of the 15 non-identity
+    two-qubit Paulis with probability p / 15 (a ZZ error keeps every even-weight Z parity, so it is invisible to a
+    parity read in X; the two-qubit depolarizing error is not)."""
     from qiskit_aer.noise import NoiseModel, pauli_error
     nm = NoiseModel(basis_gates=["cz", "sx", "x", "rz", "s", "sdg", "z", "h", "measure"])
-    err = pauli_error([("ZZ", p), ("II", 1 - p)])
+    if kind == "zz":
+        err = pauli_error([("ZZ", p), ("II", 1 - p)])
+    elif kind == "depol2":
+        labels = [a + b for a in "IXYZ" for b in "IXYZ" if a + b != "II"]
+        err = pauli_error([(lab, p / 15) for lab in labels] + [("II", 1 - p)])
+    else:
+        raise ValueError(kind)
     for a, b in couplers:
         nm.add_quantum_error(err, ["cz"], [a, b])
         nm.add_quantum_error(err, ["cz"], [b, a])
@@ -123,7 +132,7 @@ def run_circuits(circs, shots, seed=0, planted=None, theta=0.0, pauli=None):
     return rows
 
 
-def submit(job_dir, mode="noiseless", seed=20261102, planted=None, theta=0.0, p=0.0):
+def submit(job_dir, mode="noiseless", seed=20261102, planted=None, theta=0.0, p=0.0, kind="zz"):
     """Run the job's circuits locally and write raw_counts.json and submission.json (the device's format)."""
     from qiskit import qpy
     sub = os.path.join(job_dir, "submission.json")
@@ -132,7 +141,7 @@ def submit(job_dir, mode="noiseless", seed=20261102, planted=None, theta=0.0, p=
     man = json.load(open(os.path.join(job_dir, "manifest.json")))
     circs = qpy.load(open(os.path.join(job_dir, "circuits.qpy"), "rb"))
     rows = run_circuits(circs, man["shots"], seed, planted if mode == "planted" else None, theta,
-                        pauli=(planted, p) if mode == "pauli" else None)
+                        pauli=(planted, p, kind) if mode == "pauli" else None)
     t = _stamp()
     json.dump(dict(job_id=f"local-{mode}-{seed}", submitted=t, local=True, backend=man["fetch"]["backend"],
                    simulator=f"aer {mode}"), open(sub, "w"), indent=1)

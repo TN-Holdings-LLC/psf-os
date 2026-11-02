@@ -26,7 +26,8 @@ from psf_os.compile import VERSION, RuleCompiler, measured_qubits
 from psf_os.registry import sha256_file
 from psf_os.scan import INPUTS, input_bits
 
-KINDS = ("echo", "sh6", "qca", "echo_clifford")
+KINDS = ("echo", "sh6", "qca", "echo_clifford", "clifford_random", "kising_forward", "cluster_parity")
+PROBLEMS = ("clifford_random", "kising_forward", "cluster_parity")  # practice problems with a recorded exact answer per site
 
 
 def cell_name(job):
@@ -35,6 +36,12 @@ def cell_name(job):
         return f"kecho_n{job['n']}_D{job['D']}_hz{job.get('hz', 0.0):g}_h{job.get('h', 0.6):g}-fold_rule{tag}"
     if job["kind"] == "echo_clifford":
         return f"kecho_n{job['n']}_D{job['D']}_hz0_h0.785398-fold_rule"
+    if job["kind"] == "clifford_random":
+        return f"pclif_n{job['n']}_k{job['k']}_s{job['seed']}-fold_rule"
+    if job["kind"] == "cluster_parity":
+        return f"ppar_n{job['n']}-fold_rule"
+    if job["kind"] == "kising_forward":
+        return f"pkis_n{job['n']}_L{job['L']}_h{job.get('h', 0.6):g}-fold_rule"
     if job["kind"] == "sh6":
         return f"kqsh_n{job['n']}_D{job['D']}-fold_rule"
     return f"kqca_n{job['n']}_D{job['n']}-fold_rule"
@@ -51,6 +58,12 @@ def logical_circuit(job, bits):
         return qc
     if job["kind"] == "echo_clifford":
         return C.echo_clifford_circuit(bits, n, job["D"] // 2)
+    if job["kind"] == "clifford_random":
+        return C.clifford_random_circuit(bits, n, job["k"], job["seed"])
+    if job["kind"] == "cluster_parity":
+        return C.cluster_parity_circuit(bits, n)
+    if job["kind"] == "kising_forward":
+        return C.kising_forward_circuit(bits, n, job["L"], job.get("h", 0.6), job.get("hz", 0.0))
     if job["kind"] == "sh6":
         return C.sh6_circuit(bits, n, job["D"])
     if job["kind"] == "qca":
@@ -68,7 +81,7 @@ def build(dev, job, runs, compiler=None, role="user", refs=True, name=None):
         raise ValueError("n must be even (Neel inputs)")
     rc = compiler or RuleCompiler(dev)
     inputs = job.get("inputs", list(INPUTS))
-    D = job["n"] if job["kind"] == "qca" else job["D"]
+    D = {"qca": job["n"], "clifford_random": job.get("k"), "kising_forward": job.get("L"), "cluster_parity": 1}.get(job["kind"], job.get("D"))
     cs, points = [], []
     for i in inputs:
         cs.append(rc.compile(logical_circuit(job, input_bits(i, job["n"]))))
@@ -100,6 +113,8 @@ def build(dev, job, runs, compiler=None, role="user", refs=True, name=None):
                points=points, inputs=[input_bits(p["input"], job["n"]) for p in points],
                qca_test=job["kind"] in ("sh6", "qca"), valid=bool(accepted), shots=job.get("shots", 1000),
                export=dict(qpy=os.path.basename(qf), circuits=len(cs), sha256=sha256_file(qf)))
+    if job["kind"] in PROBLEMS:
+        rec["answers"] = exact_answers(job, inputs)
     json.dump(rec, open(jf, "w"), indent=1)
     return rec
 
@@ -229,6 +244,9 @@ def score(job_dir, runs):
     for name, (rec, cc) in read(job_dir, runs).items():
         if rec.get("psfos_role") == "sentinel":
             continue  # judged by psf_os.sentinel.verdict
+        if rec["psfos_job"]["kind"] in PROBLEMS:
+            res[name] = problem_score(rec, cc)
+            continue
         n = rec["task"]["n"]
         mq = rec["echo"]["measured_qubits"]
         ring = [int(mq[str(j)]) for j in range(n)]
@@ -246,3 +264,77 @@ def score(job_dir, runs):
                              usable=len(S.usable(a)), dead=[[ring[(s + t) % n] for t in range(L)]
                                                             for s, L in S.dead_runs(a)])
     return res
+
+
+# ------------------------------------------------------------------------------------------------ practice problems
+
+def exact_answers(job, inputs, method=None):
+    """{input: exact <Z_j> per ring site} of a practice problem, from its logical circuit.
+    clifford_random: stabilizer simulation (every value is +1, -1 or 0); kising_forward: statevector (n <= 22).
+    `method` forces "stabilizer", "statevector" or "density" (the independent checks of test Q1)."""
+    from qiskit.quantum_info import DensityMatrix, Pauli, StabilizerState, Statevector
+    n = job["n"]
+    m = method or ("stabilizer" if job["kind"] in ("clifford_random", "cluster_parity") else "statevector")
+    out = {}
+    for i in inputs:
+        qc = logical_circuit(job, input_bits(i, n)).remove_final_measurements(inplace=False)
+        if job["kind"] == "cluster_parity":  # the answer is the parity of all bits, not a per-site value
+            if m == "analytic":
+                out[i] = [float((-1) ** sum(input_bits(i, n)))]
+            elif m == "stabilizer":
+                out[i] = [float(StabilizerState(qc).expectation_value(Pauli("Z" * n)))]
+            else:
+                ps = Statevector(qc).probabilities()
+                par = sum(p * (-1) ** bin(x).count("1") for x, p in enumerate(ps))
+                out[i] = [float(par)]
+            continue
+        if m == "stabilizer":
+            st = StabilizerState(qc)
+            z = [float(st.expectation_value(Pauli("I" * (n - 1 - j) + "Z" + "I" * j))) for j in range(n)]
+        else:
+            if n > 22:
+                raise ValueError("the statevector answer is limited to n <= 22")
+            st = Statevector(qc) if m == "statevector" else DensityMatrix(qc)
+            z = [float(1 - 2 * st.probabilities([j])[1]) for j in range(n)]
+        out[i] = z
+    return out
+
+
+def problem_score(rec, cc):
+    """Score of a practice problem against its recorded answers, per input and per site.
+    clifford_random: on sites with answer +-1 the fraction of right bits (1 + answer x <Z>) / 2; on sites with answer 0
+    the size |<Z>| (0 is right). kising_forward: the mean squared difference of <Z_j> from the answer."""
+    n = rec["task"]["n"]
+    kind = rec["psfos_job"]["kind"]
+    if kind == "cluster_parity":
+        par = {}
+        for i, (ans,) in rec["answers"].items():
+            c = cc[(i, "echo")]
+            N = float(sum(c.values()))
+            par[i] = sum(k * (-1) ** key.replace(" ", "").count("1") for key, k in c.items()) / N
+        right = [(1 + rec["answers"][i][0] * par[i]) / 2 for i in par]
+        return dict(kind=kind, n=n, parity=par, answers={i: a[0] for i, a in rec["answers"].items()},
+                    right=float(np.mean(right)))
+    per_site, det, undet, sq = {}, [], [], []
+    for i, ans in rec["answers"].items():
+        c = cc[(i, "echo")]
+        N = float(sum(c.values()))
+        m = np.zeros(n)
+        for key, k in c.items():
+            b = key.replace(" ", "")
+            m += k * np.array([1 - 2 * int(b[n - 1 - j]) for j in range(n)])
+        m /= N
+        per_site[i] = [float(x) for x in m]
+        for j in range(n):
+            a = ans[j]
+            if kind == "clifford_random":
+                if abs(abs(a) - 1) < 1e-9:
+                    det.append((1 + a * m[j]) / 2)
+                else:
+                    undet.append(abs(m[j]))
+            sq.append((m[j] - a) ** 2)
+    out = dict(kind=kind, n=n, measured=per_site, mse=float(np.mean(sq)))
+    if kind == "clifford_random":
+        out.update(right_on_determined=float(np.mean(det)) if det else None, n_determined=len(det),
+                   size_on_undetermined=float(np.mean(undet)) if undet else None, n_undetermined=len(undet))
+    return out

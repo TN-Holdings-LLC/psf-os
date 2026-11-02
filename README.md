@@ -42,6 +42,7 @@ any of them is the owner's decision.
 | T6 | the chain runs through a Target wrapper that lets an error value be compared only with the failed mark and raises on any other quality read; the device record and the compiler's Target hold no quality number |
 | bridge | TOQB's `s2rc_device submit --local` runs a psf-os job folder, and psf-os scores what it writes |
 | S1-S6 | sentinels: the user's circuits byte-identical with or without them; CLEAN without noise; a coupler planted after placement is flagged DEAD with a run around it; the finding is gray for that day only and adds nothing to LISTED; the time-model cap stops an over-long job; no map is read |
+| Q1-Q4 | practice problems: each exact answer agrees by two independent methods; full score without noise; with planted two-qubit depolarizing errors the cluster parity is better on the avoiding ring (P1 recorded, see the report); no map is read |
 | ported | 31 of TOQB's tests (defect_list, safe_loop, qca, kising_echo, echo_tomo) on the ported code |
 
 ## Commands
@@ -56,7 +57,9 @@ psf-os status --registry REG2.json
 psf-os result --job RUN2/job/job --runs RUN2/job/runs
 ```
 
-`job.json`: `{"kind": "sh6", "n": 40, "D": 12, "shots": 1000}` (kinds: echo, sh6, qca).
+`job.json`: `{"kind": "sh6", "n": 40, "D": 12, "shots": 1000}`. Kinds: echo, sh6, qca, and the practice problems
+`clifford_random` (`k`, `seed`), `cluster_parity`, `kising_forward` (`L`, n <= 22), whose exact answers are recorded
+in the job's record at build time and scored by `psf-os result`.
 
 ## Not in M5
 
