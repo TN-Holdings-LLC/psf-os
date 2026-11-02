@@ -58,9 +58,11 @@ def logical_circuit(job, bits):
     raise ValueError(f"unknown kind {job['kind']!r}")
 
 
-def build(dev, job, runs, compiler=None):
+def build(dev, job, runs, compiler=None, role="user", refs=True, name=None):
     """Compile one logical job on the device record into a run record (TOQB layout). Returns the record.
-    Acceptance: every compiled circuit has exactly D x (one ring layer's two-qubit gates)."""
+    Acceptance: every compiled circuit has exactly D x (one ring layer's two-qubit gates).
+    role: "user", "scan" or "sentinel" (written into the record and the manifest). refs=False leaves out the readout
+    references (a sentinel reads per-site signals, which need no reference; the user's references are in the job)."""
     from qiskit import qpy
     if job["n"] % 2:
         raise ValueError("n must be even (Neel inputs)")
@@ -74,14 +76,16 @@ def build(dev, job, runs, compiler=None):
     meas0 = measured_qubits(cs[0])
     if any(measured_qubits(c) != meas0 for c in cs):
         raise RuntimeError("the compiled circuits of one record measure on different qubits")
-    for i in inputs:
+    for i in (inputs if refs else []):
         rcirc, _ = C.reference_circuit(cs[0], input_bits(i, job["n"]))
         cs.append(rcirc)
         points.append(dict(input=i, setting="ref"))
     per = rc.per_layer_q2(job["n"])
     q2s = [C.q2_count(c) for c in cs[:len(inputs)]]
     accepted = all(q == D * per for q in q2s)
-    name = cell_name(job)
+    name = name or cell_name(job)
+    for k, c in enumerate(cs):  # fixed names: the same build gives byte-identical QPY (Qiskit's default names count up)
+        c.name = f"{name}-{k}"
     os.makedirs(runs, exist_ok=True)
     jf, qf = os.path.join(runs, name + ".json"), os.path.join(runs, name + ".qpy")
     for f in (jf, qf):
@@ -89,7 +93,7 @@ def build(dev, job, runs, compiler=None):
             raise FileExistsError(f"{f} exists: a run never overwrites another")
     with open(qf, "wb") as f:
         qpy.dump(cs, f)
-    rec = dict(kind="psfos", psfos_job=dict(job), arm="fold:rule", version=VERSION, device=dev.name,
+    rec = dict(kind="psfos", psfos_role=role, psfos_job=dict(job), arm="fold:rule", version=VERSION, device=dev.name,
                masked=dev.masked, task=dict(n=job["n"], layers=D),
                echo=dict(D=D, kind=job["kind"], inputs=inputs, measured_qubits={str(k): v for k, v in sorted(meas0.items())},
                          q2_per_layer=per, q2_circuits=q2s, accepted=bool(accepted), placement=dict(rc.last)),
@@ -122,7 +126,7 @@ def assemble(dev, runs, out, max_seconds=60):
         cs = qpy.load(open(qf, "rb"))
         cid = len(cells)
         cells.append(dict(cell=cid, name=f[:-5], run_sha256=sha256_file(os.path.join(runs, f)),
-                          qpy_sha256=r["export"]["sha256"], points=len(cs)))
+                          qpy_sha256=r["export"]["sha256"], points=len(cs), role=r.get("psfos_role", "user")))
         for k, c in enumerate(cs):
             pubs.append(dict(cell=cid, point=k))
             circuits.append(c)
@@ -138,7 +142,9 @@ def assemble(dev, runs, out, max_seconds=60):
                circuits_sha256=sha256_file(os.path.join(out, "circuits.qpy")),
                qpy_sha256=sha256_file(os.path.join(out, "circuits.qpy")),  # the key TOQB s2rc_device submit checks
                qpu_seconds_model=round(seconds, 1),
-               stay=True)  # placed for this device's registry: TOQB's submit never moves it (TOQB job_stays)
+               stay=True,  # placed for this device's registry: TOQB's submit never moves it (TOQB job_stays)
+               roles={c["name"]: c["role"] for c in cells},  # which cells are the user's, which are sentinels
+               user_pubs=[k for k, p in enumerate(pubs) if cells[p["cell"]]["role"] == "user"])
     json.dump(man, open(os.path.join(out, "manifest.json"), "w"), indent=1)
     return man
 
@@ -221,6 +227,8 @@ def score(job_dir, runs):
     from psf_os import scan as S
     res = {}
     for name, (rec, cc) in read(job_dir, runs).items():
+        if rec.get("psfos_role") == "sentinel":
+            continue  # judged by psf_os.sentinel.verdict
         n = rec["task"]["n"]
         mq = rec["echo"]["measured_qubits"]
         ring = [int(mq[str(j)]) for j in range(n)]

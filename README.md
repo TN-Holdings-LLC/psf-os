@@ -19,7 +19,7 @@ not declared, and no performance is claimed. The experiments behind it, and thei
 | L2 registry | `psf_os.registry` | the defect list: black paths LISTED after 2 jobs, expired after 7 days; gray paths for one day only; repair entries |
 | L3 allocate | `psf_os.allocate` | the rule's placement with listed paths masked; reports what it skipped |
 | L4 repair | `psf_os.repair` | local frame flip, mirror-type circuits only |
-| L5 sentinel | `psf_os.sentinel` | interface only in M5 |
+| L5 sentinel | `psf_os.sentinel` | M6 prototype: the rule's echo on the user's ring in the same job (4 circuits, no references); CLEAN / WEAK / DEAD by the registry's rules; findings enter the next registry file as gray entries of the day |
 | L6 job | `psf_os.job` | a logical circuit in; the assembled job and a report out |
 
 ## Rules
@@ -41,6 +41,7 @@ any of them is the owner's decision.
 | T5 | the frame flip leaves the ideal circuit unchanged (operator equality); the repair rules |
 | T6 | the chain runs through a Target wrapper that lets an error value be compared only with the failed mark and raises on any other quality read; the device record and the compiler's Target hold no quality number |
 | bridge | TOQB's `s2rc_device submit --local` runs a psf-os job folder, and psf-os scores what it writes |
+| S1-S6 | sentinels: the user's circuits byte-identical with or without them; CLEAN without noise; a coupler planted after placement is flagged DEAD with a run around it; the finding is gray for that day only and adds nothing to LISTED; the time-model cap stops an over-long job; no map is read |
 | ported | 31 of TOQB's tests (defect_list, safe_loop, qca, kising_echo, echo_tomo) on the ported code |
 
 ## Commands
@@ -60,7 +61,7 @@ psf-os result --job RUN2/job/job --runs RUN2/job/runs
 ## Not in M5
 
 The IBM submission inside psf-os (`submit` without `--local`; for now jobs go through TOQB's `s2rc_device submit`,
-owner's decision of 2 November, always with `--stay` (TOQB 904e78f) so that a job is never moved to another device; if the job's own device has a failed element under it, nothing is sent and the job is planned again from a new fetch. A result from another device than the one the job was placed for is refused), sentinels (M6, interface only), repair discovery (M7), the Rust core
+owner's decision of 2 November, always with `--stay` (TOQB 904e78f) so that a job is never moved to another device; if the job's own device has a failed element under it, nothing is sent and the job is planned again from a new fetch. A result from another device than the one the job was placed for is refused), repair discovery (M7), the Rust core
 (M8), a resident service.
 
 Code ported from TOQB (same rights holder) says so at the top of each file.

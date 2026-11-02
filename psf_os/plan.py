@@ -1,5 +1,5 @@
 """The chain behind `psf-os plan`: registry stale -> a scan job first; registry fresh -> avoid, place, (repair),
-sentinels (none in M5), assemble. Every decision goes into report.json with the category and the entries applied.
+sentinels (L5: an echo on the user's ring in the same job), assemble. Every decision goes into report.json with the category and the entries applied.
 """
 from __future__ import annotations
 
@@ -42,7 +42,8 @@ def scan_job(dev, out, sizes=SCAN_SIZES, spec=None):
                 job=os.path.join(out, "scan", "job"), runs=runs)
 
 
-def plan(dev, logical, reg, out, now, standard=False, scan_sizes=SCAN_SIZES, scan_spec=None):
+def plan(dev, logical, reg, out, now, standard=False, scan_sizes=SCAN_SIZES, scan_spec=None, sentinels=True,
+         sentinel_spec=None, max_seconds=60):
     """Returns the report. `reg` is a registry dict (R.load / R.empty()); `standard` skips the registry entirely."""
     if os.path.exists(os.path.join(out, "report.json")):
         raise FileExistsError(f"{out} already holds a plan")
@@ -88,8 +89,13 @@ def plan(dev, logical, reg, out, now, standard=False, scan_sizes=SCAN_SIZES, sca
     rep["placement"] = rec["echo"]["placement"]
     rep["accepted"] = rec["echo"]["accepted"]
     rep["avoided_on_ring"] = [a["path"] for a in avoid if contains_path(ring, a["path"])]
-    rep["sentinels"] = sentinel.plan(dev_use, ring, reg, now)
-    man = J.assemble(dev_use, runs, os.path.join(out, "job", "job"))
+    if sentinels and not standard:  # the standard category runs the plain job, no OS layer
+        srec = sentinel.build(dev_use, runs, ring, job.get("shots", 1000), rc, spec=sentinel_spec)
+        rep["sentinels"] = dict(cell=sentinel.name_for(job["n"], srec["echo"]["D"]), circuits=srec["export"]["circuits"],
+                                spec=srec["psfos_job"])
+    else:
+        rep["sentinels"] = None
+    man = J.assemble(dev_use, runs, os.path.join(out, "job", "job"), max_seconds=max_seconds)
     rep["user_job"] = dict(job=os.path.join(out, "job", "job"), runs=runs, circuits=len(man["pubs"]),
                            qpu_seconds_model=man["qpu_seconds_model"])
     rep["next"] = ["psf-os submit --job " + rep["user_job"]["job"], "psf-os result --job ... --runs ..."]

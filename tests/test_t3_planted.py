@@ -60,7 +60,8 @@ def test_planted_defects_are_listed_and_avoided(tmp_path):
     assert len(listed) == 2  # one per planted coupler on a standard ring; the third coupler was never scanned
     first = {o["n"]: o for o in reg["observations"][:3]}
     for n, e in ((40, planted[0]), (72, planted[1])):
-        rep = P.plan(dev, dict(SPEC, n=n), reg, str(tmp_path / f"p{n}"), now)
+        rep = P.plan(dev, dict(SPEC, n=n), reg, str(tmp_path / f"p{n}"), now,
+                     sentinel_spec=dict(kind="echo_clifford", D=24))
         assert rep["category"] == "self-checked" and rep["avoided"] and rep["accepted"]
         assert not _on_ring(rep["ring"], e)
         sim.submit(rep["user_job"]["job"], "pauli", seed=2000 + n, planted=planted, p=P_ERR)

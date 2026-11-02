@@ -37,6 +37,7 @@ def main(argv=None):
     pl.add_argument("--out", required=True)
     pl.add_argument("--now", default=None)
     pl.add_argument("--standard", action="store_true", help="no registry: the standard category")
+    pl.add_argument("--no-sentinels", action="store_true", help="leave out the L5 sentinel")
     pl.add_argument("--scan-sizes", default="20,40,72")
     pl.add_argument("--scan-clifford", action="store_true",
                     help="dry runs only: scan with the echo at its Clifford point (h = pi/4) so a local run can simulate it")
@@ -74,7 +75,8 @@ def main(argv=None):
         reg = R.load(a.registry) if a.registry and os.path.exists(a.registry) else R.empty()
         rep = P.plan(dev, json.load(open(a.job)), reg, a.out, now, standard=a.standard,
                      scan_sizes=tuple(int(x) for x in a.scan_sizes.split(",")),
-                     scan_spec=dict(kind="echo_clifford", D=24, shots=1000) if a.scan_clifford else None)
+                     scan_spec=dict(kind="echo_clifford", D=24, shots=1000) if a.scan_clifford else None,
+                     sentinels=not a.no_sentinels)
         print(json.dumps({k: rep[k] for k in ("category", "why", "avoided", "ring", "next") if k in rep}, indent=1))
         return 0
     if a.cmd == "submit":
@@ -104,7 +106,10 @@ def main(argv=None):
         print("\n".join(R.status_lines(R.load(a.registry), a.device, now)) or "(empty)")
         return 0
     if a.cmd == "result":
-        print(json.dumps(J.score(a.job, a.runs), indent=1))
+        from psf_os import sentinel
+        v = sentinel.verdict(a.job, a.runs)
+        print(json.dumps(dict(user=J.score(a.job, a.runs), sentinel=dict(
+            status=v["status"], runs={k: c["dead"] + c["weak"] for k, c in v["cells"].items()})), indent=1))
         return 0
     return 2
 
