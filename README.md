@@ -40,6 +40,7 @@ any of them is the owner's decision.
 | T4 | the sh6 identity (OS plan M3, second form) and the echo, entered through the L6 interface on three fake devices, return every bit without noise |
 | T5 | the frame flip leaves the ideal circuit unchanged (operator equality); the repair rules |
 | T6 | the chain runs through a Target wrapper that lets an error value be compared only with the failed mark and raises on any other quality read; the device record and the compiler's Target hold no quality number |
+| bridge | TOQB's `s2rc_device submit --local` runs a psf-os job folder, and psf-os scores what it writes |
 | ported | 31 of TOQB's tests (defect_list, safe_loop, qca, kising_echo, echo_tomo) on the ported code |
 
 ## Commands
@@ -58,7 +59,8 @@ psf-os result --job RUN2/job/job --runs RUN2/job/runs
 
 ## Not in M5
 
-The IBM submission (`submit` without `--local`), sentinels (M6, interface only), repair discovery (M7), the Rust core
+The IBM submission inside psf-os (`submit` without `--local`; for now jobs go through TOQB's `s2rc_device submit`,
+owner's decision of 2 November, and a result from another device than the one the job was placed for is refused), sentinels (M6, interface only), repair discovery (M7), the Rust core
 (M8), a resident service.
 
 Code ported from TOQB (same rights holder) says so at the top of each file.

@@ -134,7 +134,9 @@ def assemble(dev, runs, out, max_seconds=60):
         qpy.dump(circuits, f)
     man = dict(written=dt.datetime.now().astimezone().isoformat(timespec="seconds"), device=dev.to_json(),
                fetch=dict(backend=dev.name, fake=dev.fake), cells=cells, pubs=pubs, shots=shots,
-               circuits_sha256=sha256_file(os.path.join(out, "circuits.qpy")), qpu_seconds_model=round(seconds, 1))
+               circuits_sha256=sha256_file(os.path.join(out, "circuits.qpy")),
+               qpy_sha256=sha256_file(os.path.join(out, "circuits.qpy")),  # the key TOQB s2rc_device submit checks
+               qpu_seconds_model=round(seconds, 1))
     json.dump(man, open(os.path.join(out, "manifest.json"), "w"), indent=1)
     return man
 
@@ -190,6 +192,13 @@ def read(job_dir, runs):
     from psf_os.scan import load_counts
     man = json.load(open(os.path.join(job_dir, "manifest.json")))
     rows = load_counts(job_dir)
+    # TOQB's submit may move a job to the next device in its fixed order when the first has a failed element under it.
+    # A psf-os job was placed with one device's registry, so a result from another device is refused.
+    sub = os.path.join(job_dir, "submission.json")
+    ran_on = json.load(open(sub)).get("backend") if os.path.exists(sub) else None
+    if ran_on and ran_on != man["fetch"]["backend"]:
+        raise RuntimeError(f"the job was placed for {man['fetch']['backend']} but ran on {ran_on}: its registry "
+                           "entries do not apply there; not scored")
     out = {}
     for cid, c in enumerate(man["cells"]):
         rf = os.path.join(runs, c["name"] + ".json")
