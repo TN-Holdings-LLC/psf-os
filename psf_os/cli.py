@@ -1,9 +1,12 @@
 """psf-os: one command for the self-checking layer.
 
-    psf-os fetch --backend fake:FakeFez --out DEV_DIR      coupling graph and failed elements only
+    psf-os fetch --backend ibm_kingston | fake:FakeFez --out DEV_DIR
+                                                           coupling graph and failed elements only (IBM: the saved account)
     psf-os plan --device DEV_DIR --job LOGICAL.json --registry REG.json --out DIR [--now ISO] [--standard]
                                                            stale registry -> a scan job; fresh -> avoid, place, assemble
-    psf-os submit --job JOB_DIR --local [--noiseless]      fake devices only here (Aer); an IBM device is not wired in M5
+    psf-os submit --job JOB_DIR [--local]                  IBM: the job's own device only ("stay"), options off,
+                                                           refused if a circuit touches a failed element; --local: Aer
+    psf-os collect --job JOB_DIR [--wait-min M]            IBM: raw_counts.json once the job is done
     psf-os scan-ingest --device DEV_DIR --job JOB_DIR --runs RUNS --registry REG.json --out NEW_REG.json --label L
     psf-os status --registry REG.json [--device NAME] [--now ISO]
     psf-os result --job JOB_DIR --runs RUNS                score and logical counts
@@ -28,7 +31,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="psf-os")
     sp = p.add_subparsers(dest="cmd", required=True)
     f = sp.add_parser("fetch")
-    f.add_argument("--backend", required=True, help="fake:FakeFez etc. (an IBM backend is fetched at home)")
+    f.add_argument("--backend", required=True, help="ibm_kingston etc. (the saved IBM account), or fake:FakeFez")
     f.add_argument("--out", required=True)
     pl = sp.add_parser("plan")
     pl.add_argument("--device", required=True)
@@ -45,6 +48,9 @@ def main(argv=None):
     s.add_argument("--job", required=True)
     s.add_argument("--local", action="store_true")
     s.add_argument("--seed", type=int, default=20261102)
+    co = sp.add_parser("collect")
+    co.add_argument("--job", required=True)
+    co.add_argument("--wait-min", type=float, default=0.0)
     si = sp.add_parser("scan-ingest")
     si.add_argument("--device", required=True)
     si.add_argument("--job", required=True)
@@ -64,10 +70,11 @@ def main(argv=None):
 
     if a.cmd == "fetch":
         kind, _, name = a.backend.partition(":")
-        if kind != "fake":
-            print("STOP: psf-os does not connect to IBM in M5; fetch a fake device (fake:FakeFez)", file=sys.stderr)
-            return 2
-        Dv.fetch_fake(name).save(a.out)
+        if kind == "fake":
+            Dv.fetch_fake(name).save(a.out)
+        else:
+            from psf_os import ibm
+            ibm.fetch(ibm.service(), a.backend, a.out)
         print(f"{a.out}/device.json")
         return 0
     if a.cmd == "plan":
@@ -81,8 +88,9 @@ def main(argv=None):
         return 0
     if a.cmd == "submit":
         if not a.local:
-            print("STOP: only --local (Aer) in M5; IBM submission is not wired", file=sys.stderr)
-            return 2
+            from psf_os import ibm
+            print(f"submitted job {ibm.submit(ibm.service(), a.job)} (stay); results: psf-os collect --job {a.job}")
+            return 0
         man = json.load(open(os.path.join(a.job, "manifest.json")))
         if not man["fetch"].get("fake"):
             print("STOP: a local run is only for a fake device's job", file=sys.stderr)
@@ -93,6 +101,11 @@ def main(argv=None):
         except ValueError as e:
             print(f"STOP: {e}", file=sys.stderr)
             return 2
+        return 0
+    if a.cmd == "collect":
+        from psf_os import ibm
+        st = ibm.collect(ibm.service(), a.job, wait_s=60 * a.wait_min)
+        print(f"status {st}" + ("; raw_counts.json written" if "DONE" in st.upper() else "; run collect again later"))
         return 0
     if a.cmd == "scan-ingest":
         dev = Dv.Device.load(a.device)
