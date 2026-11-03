@@ -30,9 +30,13 @@ from psf_os.registry import sha256_file
 THETA_J = -np.pi / 2
 
 
-def region(dev):
-    """(sorted qubits, sorted edges) of the largest connected part of the working lattice."""
-    edges = sorted(tuple(sorted(e)) for e in dev.working_couplers() if dev.qubit_ok(e[0]) and dev.qubit_ok(e[1]))
+def region(dev, suspect=False):
+    """(sorted qubits, sorted edges) of the largest connected part of the working lattice.
+    suspect=True also leaves out both ends of every failed or masked coupler (a qubit next to a failed coupler is not
+    trusted: on 3 November the two worst qubits of the lattice were the ends of IBM's failed coupler (130, 131))."""
+    drop = {q for c in dev.failed_couplers for q in c} if suspect else set()
+    edges = sorted(tuple(sorted(e)) for e in dev.working_couplers()
+                   if dev.qubit_ok(e[0]) and dev.qubit_ok(e[1]) and e[0] not in drop and e[1] not in drop)
     adj = collections.defaultdict(set)
     for a, b in edges:
         adj[a].add(b)
@@ -155,8 +159,8 @@ def answers(qubits, edges, theta, t, max_qubits=26):
     return dict(z=z, method="cone statevector", cone_max=m)
 
 
-def cell_name(theta):
-    return f"pkim_th{theta:.6f}-lattice"
+def cell_name(theta, tag=""):
+    return f"pkim{tag}_th{theta:.6f}-lattice"
 
 
 def build(dev, job, runs, compiler=None, name=None):
@@ -166,17 +170,19 @@ def build(dev, job, runs, compiler=None, name=None):
     from qiskit import qpy
     from psf_os import circuits as C
     rc = compiler or RuleCompiler(dev)
-    qubits, edges = region(dev)
-    theta, tmax = float(job["theta"]), int(job["t_max"])
+    qubits, edges = region(dev, suspect=bool(job.get("suspect")))
+    theta = float(job["theta"])
+    ts = [int(t) for t in job["ts"]] if "ts" in job else list(range(int(job["t_max"]) + 1))
+    tmax = max(ts)
     cs, points, q2 = [], [], []
-    for t in range(tmax + 1):
+    for t in ts:
         c = rc.pm.run(circuit(qubits, edges, theta, t, width=dev.num_qubits))
         cs.append(c)
         points.append(dict(input=f"t{t}", setting="z", t=t))
         q2.append(C.q2_count(c))
     ok_meas = all(measured_qubits(c) == {k: q for k, q in enumerate(qubits)} for c in cs)
-    accepted = ok_meas and all(q == t * len(edges) for t, q in enumerate(q2))
-    name = name or cell_name(theta)
+    accepted = ok_meas and all(q == t * len(edges) for t, q in zip(ts, q2))
+    name = name or cell_name(theta, job.get("tag", ""))
     for k, c in enumerate(cs):
         c.name = f"{name}-{k}"
     os.makedirs(runs, exist_ok=True)
@@ -189,7 +195,7 @@ def build(dev, job, runs, compiler=None, name=None):
     rec = dict(kind="psfos", psfos_role="user", psfos_job=dict(job, kind="kim_lattice"), arm="lattice:region",
                version=VERSION, device=dev.name, masked=dev.masked, task=dict(n=len(qubits), layers=tmax),
                qubits=qubits, edges=[list(e) for e in edges], colours=len(colour(edges)),
-               echo=dict(kind="kim_lattice", q2_circuits=q2, q2_expected=[t * len(edges) for t in range(tmax + 1)],
+               echo=dict(kind="kim_lattice", q2_circuits=q2, q2_expected=[t * len(edges) for t in ts],
                          accepted=bool(accepted)),
                points=points, valid=bool(accepted), shots=job.get("shots", 4000),
                export=dict(qpy=os.path.basename(qf), circuits=len(cs), sha256=sha256_file(qf)))
@@ -220,5 +226,6 @@ def score(job_dir, runs):
         for p in rec["points"]:
             m, se = z_values(cc[(p["input"], "z")], n)
             rows.append(dict(t=p["t"], z=[float(x) for x in m], se=[float(x) for x in se]))
-        out[name] = dict(theta=rec["psfos_job"]["theta"], qubits=rec["qubits"], rows=rows)
+        out[name] = dict(theta=rec["psfos_job"]["theta"], tag=rec["psfos_job"].get("tag", ""),
+                         suspect=bool(rec["psfos_job"].get("suspect")), qubits=rec["qubits"], rows=rows)
     return out

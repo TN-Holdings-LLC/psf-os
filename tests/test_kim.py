@@ -65,3 +65,14 @@ def test_trivial_point_and_counts():
     for L in K.colour(EDGES):
         qs = [q for e in L for q in e]
         assert len(qs) == len(set(qs))
+
+
+def test_suspect_region_drops_ends_of_failed_couplers():
+    from psf_os.device import Device
+    couplers = [list(e) for e in EDGES]
+    d = Device(name="toy", num_qubits=14, couplers=couplers, failed_couplers=[[3, 4]], failed_qubits=[])
+    q0, e0 = K.region(d)
+    q1, e1 = K.region(d, suspect=True)
+    assert 3 in q0 and 4 in q0 and (3, 4) not in e0
+    assert 3 not in q1 and 4 not in q1
+    assert all(3 not in e and 4 not in e for e in e1)
