@@ -50,27 +50,15 @@ def copies():
     return [(dr, dc, {q: shift(q, dr, dc) for q in QUBITS}) for dr in (0, 2, 4) for dc in (0, 4)]
 
 
+OFFSETS = [(dr, dc) for dr in (0, 2, 4) for dc in (0, 4)]  # the six copies of P6's declaration, in its order
+
+
 def place(dev):
     """(drow, dcol, mapping, reasons): the first copy with no failed, masked or suspect element; reasons lists why each
-    earlier copy was passed over. Raises if none qualifies."""
-    working = {tuple(sorted(e)) for e in dev.working_couplers()}
-    suspect = {q for c in dev.failed_couplers for q in c}
-    reasons = []
-    for dr, dc, m in copies():
-        why = []
-        for q in QUBITS:
-            p = m[q]
-            if p >= dev.num_qubits or not dev.qubit_ok(p):
-                why.append(f"qubit {p} failed")
-            elif p in suspect:
-                why.append(f"qubit {p} suspect")
-        for a, b in EDGES:
-            if tuple(sorted((m[a], m[b]))) not in working:
-                why.append(f"coupler ({m[a]}, {m[b]}) not working")
-        if not why:
-            return dr, dc, m, reasons
-        reasons.append(dict(drow=dr, dcol=dc, why=why))
-    raise RuntimeError(f"no copy of the patch qualifies: {reasons}")
+    earlier copy was passed over. Raises if none qualifies. Since 2026-11-04 through psf_os.lattice2d.place, restricted
+    to the six copies of P6's declaration in the same order (tests/test_lattice2d.py checks the result is unchanged)."""
+    from psf_os import lattice2d
+    return lattice2d.place(dev, EDGES, QUBITS, offsets=OFFSETS)
 
 
 def ops(qubits, layers, t, tx=THETA_X, tz=THETA_Z, tzz=THETA_ZZ):
