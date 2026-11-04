@@ -67,3 +67,9 @@ def test_place_skips_suspect_copy():
     d = Device(name="toy", num_qubits=156, couplers=[list(e) for e in cm], failed_couplers=[[5, 6]], failed_qubits=[])
     dr, dc, m, reasons = I.place(d)
     assert (dr, dc) != (0, 0) and reasons[0]["drow"] == 0 and reasons[0]["dcol"] == 0
+
+
+def test_theta_x_parameter_reaches_the_answer():
+    import numpy as np
+    for tx in (0.3, 0.8):
+        assert abs(I.answer_cone(I.QUBITS[0], 1, tx=tx)[0] - np.cos(tx)) < 1e-12

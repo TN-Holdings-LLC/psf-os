@@ -88,15 +88,16 @@ def ops(qubits, layers, t, tx=THETA_X, tz=THETA_Z, tzz=THETA_ZZ):
     return out
 
 
-def circuit(t, mapping=None, width=None, measure=True, qubits=None, layers=None):
-    """The circuit on labels -> physical qubits `mapping` (default: the tutorial's labels); clbit k = sorted labels[k]."""
+def circuit(t, mapping=None, width=None, measure=True, qubits=None, layers=None, tx=THETA_X):
+    """The circuit on labels -> physical qubits `mapping` (default: the tutorial's labels); clbit k = sorted labels[k].
+    `tx` is theta_x (the tutorial's 0.53 by default; the problem bank also uses other values)."""
     from qiskit import QuantumCircuit
     qubits = qubits or QUBITS
     layers = layers or LAYERS
     m = mapping or {q: q for q in qubits}
     width = width or (max(m.values()) + 1)
     qc = QuantumCircuit(width, len(qubits) if measure else 0)
-    for op in ops(qubits, layers, t):
+    for op in ops(qubits, layers, t, tx=tx):
         if op[0] == "cz":
             qc.cz(m[op[1]], m[op[2]])
         elif op[0] == "h":
@@ -129,7 +130,7 @@ def cone(q, t, edges=None, layers=None):
     return sorted(b), [[e for e in L if e[0] in b and e[1] in b] for L in layers]
 
 
-def answer_cone(q, t, max_qubits=26, edges=None, layers=None):
+def answer_cone(q, t, max_qubits=26, edges=None, layers=None, tx=THETA_X):
     """<Z_q> from q's cone by Aer statevector (CPU)."""
     from qiskit.quantum_info import Pauli
     from qiskit_aer import AerSimulator
@@ -137,7 +138,7 @@ def answer_cone(q, t, max_qubits=26, edges=None, layers=None):
     if len(cq) > max_qubits:
         return None, len(cq)
     idx = {p: k for k, p in enumerate(cq)}
-    qc = circuit(t, mapping=idx, width=len(cq), measure=False, qubits=cq, layers=cl)
+    qc = circuit(t, mapping=idx, width=len(cq), measure=False, qubits=cq, layers=cl, tx=tx)
     qc.save_expectation_value(Pauli("Z"), [idx[q]], label="z")
     return float(AerSimulator(method="statevector").run(qc).result().data(0)["z"]), len(cq)
 
@@ -151,15 +152,16 @@ def build(dev, job, runs, compiler=None, name=None):
     rc = compiler or RuleCompiler(dev)
     dr, dc, m, reasons = place(dev)
     ts = [int(t) for t in job["ts"]]
+    tx = float(job.get("theta_x", THETA_X))
     cs, points, q2 = [], [], []
     for t in ts:
-        c = rc.pm.run(circuit(t, mapping=m, width=dev.num_qubits))
+        c = rc.pm.run(circuit(t, mapping=m, width=dev.num_qubits, tx=tx))
         cs.append(c)
         points.append(dict(input=f"t{t}", setting="z", t=t))
         q2.append(C.q2_count(c))
     want = {k: m[q] for k, q in enumerate(QUBITS)}
     accepted = all(measured_qubits(c) == want for c in cs) and all(n == 2 * len(EDGES) * t for t, n in zip(ts, q2))
-    name = name or "pis2d_qedma-patch"
+    name = name or f"pis2d_tx{tx:g}_qedma-patch"
     for k, c in enumerate(cs):
         c.name = f"{name}-{k}"
     os.makedirs(runs, exist_ok=True)
@@ -181,10 +183,14 @@ def build(dev, job, runs, compiler=None, name=None):
 
 
 def score(job_dir, runs):
-    """{t: [<Z> per label in sorted order]} of the job's ising2d record."""
+    """{theta_x: {t: [<Z> per label in sorted order]}} of the job's ising2d records."""
     from psf_os import job as J
     from psf_os.kim import z_values
+    out = {}
     for name, (rec, cc) in J.read(job_dir, runs).items():
         if rec.get("psfos_job", {}).get("kind") == "ising2d":
-            return {p["t"]: z_values(cc[(p["input"], "z")], len(QUBITS))[0].tolist() for p in rec["points"]}
-    raise RuntimeError("no ising2d record")
+            tx = float(rec["psfos_job"].get("theta_x", THETA_X))
+            out[f"{tx:g}"] = {p["t"]: z_values(cc[(p["input"], "z")], len(QUBITS))[0].tolist() for p in rec["points"]}
+    if not out:
+        raise RuntimeError("no ising2d record")
+    return out
