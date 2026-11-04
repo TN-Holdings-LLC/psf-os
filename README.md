@@ -2,15 +2,61 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-A self-checking layer between a ring circuit and an IBM heavy-hex device, without the calibration map.
+A self-checking layer between a user's circuit and an IBM heavy-hex device, without the calibration map.
 
-It tests its own rings with a mirror echo, keeps a list of the paths it found dead, and places the next ring around
-them. It does not read a calibration quality number: it uses the coupling graph and the elements marked as failed.
+It places a circuit by formula (a ring by the rule, a 2D circuit by translation of its own pattern), adds checks made
+of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), keeps a list of what it found dead,
+and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
+elements marked as failed.
 
-**Status.** Skeleton for milestone M5 of the OS plan (TOQB `prereg/drafts-2026-11-01/os_plan_DRAFT.md`). It is
-not declared, and no performance is claimed. The experiments behind it, and their records, live in TOQB.
+**Status.** Working code, not a release. The experiments behind it, and their records, live in
+[TOQB](https://github.com/TN-Holdings-LLC/TOQB); every device result below was declared (hash and time locked in git)
+before its data existed.
 
-## Layers
+## First device results: practice problems through the user entrance (2026-11-04)
+
+Twenty-two circuits with known answers, written by a user in plain Qiskit (`rz`, `rzz`, `rx`, `h`, `cx`) from the
+problems' definitions, were handed to `psf-os run2d` as one batch. psf-os placed each one, added its floor and mirror,
+and returned an answer card per circuit. No error mitigation, no correction, no calibration map. The answers were
+computed and sealed before the runs.
+
+- P4: the kicked Ising chain of IBM's dual-unitary experiment (arXiv 2411.00765), 33 qubits, two kick strengths,
+  t = 2-16.
+- P5: the kicked Ising model in the form of IBM's 2023 utility experiment, on the device's own lattice (151 qubits on
+  ibm_marrakesh, 153 on ibm_fez), theta = 0.4, 0.8, 1.0, t = 2-8 (up to 1,360 CZ).
+
+| device | READS | AGREES (\|M - exact\| <= 0.05) | BEATS (the better trivial guess) |
+|---|---|---|---|
+| ibm_marrakesh | 22 / 22 | 19 / 22 | 19 / 22 |
+| ibm_fez | 22 / 22 | 18 / 22 | 20 / 22 |
+
+- **Benchmark number:** on both devices the 2D problems at theta 0.8 and 1.0 agree with the exact answer to t = 8
+  (151-153 qubits; worst difference on fez 0.023), without correction.
+- **Device user's number:**
+  - theta 0.4 misses by -0.04 to -0.07 on both devices, the same size: its answers are near 1, and a loss of a few
+    percent is enough to lose to "every qubit reads 1".
+  - In P4 the one site that carries the signal falls behind with depth: 0.30 against 0.41 at t = 16.
+  - One day, two devices 25 minutes apart, both in a good state (floor 0.96). The spread from day to day is not
+    measured yet.
+- The batch ran end to end with no hand step; on fez the entrance moved P4 off a failed coupler by itself.
+- Records: TOQB [`practice-2026-11-04`](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/practice-2026-11-04) and
+  [`practice-fez-2026-11-04`](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/practice-fez-2026-11-04). The same evening, a correction by the floor and the mirror
+  ([fez](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/corr-2026-11-04), [marrakesh](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/corr-marrakesh-2026-11-04)) worked on one device and not fully on the
+  other; it is on hold.
+
+## Layers for 2D circuits
+
+| module | does |
+|---|---|
+| `psf_os.lattice2d` | places any edge set on Heron r2 labels by translation only: the first copy, in a fixed order, with no failed or suspect element; no search |
+| `psf_os.user2d` | L6 for 2D: the user's circuit (QPY or OpenQASM) in, one job with its controls out, an answer card back; `rzz(+-pi/2)` is written exactly as one CZ (`compile.rzz_exact`) |
+| `psf_os.mirror2d` | the user's circuit, a barrier, its inverse; accepted only with exactly twice the CZ count; flags qubits where the signal is lost |
+| floor | the user's compiled circuit with every non-diagonal one-qubit gate removed: the same CZs, ideal ⟨Z⟩ = 1 |
+| `psf_os.ibm` | `fetch` (coupling graph and failed elements only), `submit` (the job's own device only, dynamical decoupling and twirling off; nothing is sent if a circuit touches a failed element), `collect` |
+| `psf_os.ledger`, `psf_os.repair2d`, `psf_os.crosstalk2d` | drafts (not declared): reliability ledger, the rule-based self-repair chain, crosstalk test pieces |
+| `psf_os.dual`, `psf_os.kim`, `psf_os.ising2d` | the practice problems P4, P5, P6 as modules, with their exact answers |
+
+## Layers for rings
 
 | layer | module | does |
 |---|---|---|
@@ -30,7 +76,7 @@ any of them is the owner's decision.
 
 ## Tests
 
-`TOQB_DIR=<TOQB checkout> python -m pytest -q`
+`TOQB_DIR=<TOQB checkout> python -m pytest -q` (113 passed, 18 skipped without the optional pieces)
 
 | test | what it checks |
 |---|---|
@@ -47,10 +93,22 @@ any of them is the owner's decision.
 
 ## Commands
 
+A 2D circuit (or several, as one job):
+
+```
+psf-os fetch --backend ibm_fez --out DEV                                  # the saved IBM account; graph and failed marks only
+psf-os run2d --device DEV --circuit a.qpy b.qasm --out RUN                # place, add floor + mirror + sentinel, assemble
+psf-os submit --job RUN/job
+psf-os collect --job RUN/job --wait-min 30
+psf-os result2d --job RUN/job --runs RUN/runs --answers answers.json      # answer cards; answers optional
+```
+
+A ring:
+
 ```
 psf-os fetch --backend fake:FakeFez --out DEV
 psf-os plan --device DEV --job job.json --registry REG.json --out RUN     # no scan today -> a scan job first
-psf-os submit --job RUN/scan/job --local                                  # fake devices only in M5
+psf-os submit --job RUN/scan/job --local                                  # --local: fake devices only
 psf-os scan-ingest --device DEV --job RUN/scan/job --runs RUN/scan/runs --registry REG.json --out REG2.json --label s1
 psf-os plan --device DEV --job job.json --registry REG2.json --out RUN2   # avoid, place, assemble
 psf-os status --registry REG2.json
@@ -61,11 +119,10 @@ psf-os result --job RUN2/job/job --runs RUN2/job/runs
 `clifford_stab` (`k`, `seed`, optional `offset`, `max_weight`: P1, the random Clifford circuit read through a set of its output stabilizers with disjoint supports, every answer +1 or -1; `clifford_random`, read site by site, is kept for the records but cannot see a defect), `cluster_parity`, `kising_forward` (`L`, n <= 22), whose exact answers are recorded
 in the job's record at build time and scored by `psf-os result`.
 
-## Not in M5
+## Not yet
 
-The IBM submission inside psf-os (`submit` without `--local`; for now jobs go through TOQB's `s2rc_device submit`,
-owner's decision of 2 November, always with `--stay` (TOQB 904e78f) so that a job is never moved to another device; if the job's own device has a failed element under it, nothing is sent and the job is planned again from a new fetch. A result from another device than the one the job was placed for is refused), repair discovery (M7), the Rust core
-(M8), a resident service.
+A declared self-repair test, the spread from day to day, the Rust core (M8), a resident service. A job is never moved
+to another device ("stay"); a result from another device than the one the job was placed for is refused.
 
 Code ported from TOQB (same rights holder) says so at the top of each file.
 
