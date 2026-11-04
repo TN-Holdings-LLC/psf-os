@@ -10,6 +10,11 @@
     psf-os scan-ingest --device DEV_DIR --job JOB_DIR --runs RUNS --registry REG.json --out NEW_REG.json --label L
     psf-os status --registry REG.json [--device NAME] [--now ISO]
     psf-os result --job JOB_DIR --runs RUNS                score and logical counts
+    psf-os run2d --device DEV_DIR --circuit FILE.qpy|.qasm --out DIR [--registry REG.json] [--shots N]
+                                                           a 2D circuit on Heron r2 labels: placed by translation,
+                                                           floor, mirror and ring sentinel added (psf_os.user2d)
+    psf-os result2d --job JOB_DIR --runs RUNS [--answers ANSWERS.json]
+                                                           the answer card (value +- 2 SE, floor, mirror flags, sentinel)
 
 A registry file is never overwritten: scan-ingest writes the next one (TOQB's list_after convention).
 """
@@ -65,6 +70,18 @@ def main(argv=None):
     r = sp.add_parser("result")
     r.add_argument("--job", required=True)
     r.add_argument("--runs", required=True)
+    r2 = sp.add_parser("run2d")
+    r2.add_argument("--device", required=True)
+    r2.add_argument("--circuit", required=True)
+    r2.add_argument("--out", required=True)
+    r2.add_argument("--registry", default=None)
+    r2.add_argument("--shots", type=int, default=4000)
+    r2.add_argument("--dry-clifford-sentinel", action="store_true",
+                    help="local dry runs only: the ring sentinel at the echo's Clifford point, so Aer can run the job")
+    c2 = sp.add_parser("result2d")
+    c2.add_argument("--job", required=True)
+    c2.add_argument("--runs", required=True)
+    c2.add_argument("--answers", default=None, help="JSON {label: exact <Z>}")
     a = p.parse_args(argv)
     now = (dt.datetime.fromisoformat(a.now) if getattr(a, "now", None) else P.now_cet())
 
@@ -123,6 +140,27 @@ def main(argv=None):
         v = sentinel.verdict(a.job, a.runs)
         print(json.dumps(dict(user=J.score(a.job, a.runs), sentinel=dict(
             status=v["status"], runs={k: c["dead"] + c["weak"] for k, c in v["cells"].items()})), indent=1))
+        return 0
+    if a.cmd == "run2d":
+        from psf_os import allocate as A
+        from psf_os import user2d as U
+        dev = Dv.Device.load(a.device)
+        avoid = R.avoid_paths(R.load(a.registry), dev.name, now) if a.registry else []
+        if avoid:
+            dev, _ = A.mask(dev, avoid, reason=f"registry at {now.isoformat(sep=' ')}")
+        try:
+            rep = U.build(dev, U.load(a.circuit), a.out, shots=a.shots,
+                          sentinel_spec=dict(kind="echo_clifford", D=24) if a.dry_clifford_sentinel else None)
+        except U.Refused as e:
+            print(f"REFUSED: {e}", file=sys.stderr)
+            return 2
+        print(json.dumps({k: rep[k] for k in ("device", "copy", "cz", "circuits", "qpu_seconds_model", "job", "runs")},
+                         indent=1))
+        return 0
+    if a.cmd == "result2d":
+        from psf_os import user2d as U
+        ans = json.load(open(a.answers)) if a.answers else None
+        print(json.dumps(U.card(a.job, a.runs, ans), indent=1))
         return 0
     return 2
 
