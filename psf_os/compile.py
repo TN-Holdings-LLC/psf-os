@@ -71,6 +71,37 @@ class RuleCompiler:
         return C.q2_count(self.compile(C.model_circuit(ang, n, 1)))
 
 
+def rzz_exact(qc, tol=1e-9):
+    """The circuit with every RZZ(theta), theta = +-pi/2 (mod 2 pi), written as RZ(theta) x RZ(theta) then one CZ.
+
+    e^{-i theta/2 ZZ} = CZ (RZ(theta) x RZ(theta)) up to a global phase for theta = +-pi/2 (both are diagonal; compare
+    the four phases). The level-1 pass manager otherwise writes every RZZ with two CZs. Any other angle is left as it
+    is. An identity, not a search: the same circuit comes out for the same input, and no device number is read."""
+    out = qc.copy_empty_like()
+    for ins in qc.data:
+        op = ins.operation
+        if op.name == "rzz" and not getattr(op, "condition", None):
+            try:
+                th = float(op.params[0])
+            except TypeError:  # a free parameter: leave it
+                th = None
+            if th is not None:
+                r = (th + np.pi) % (2 * np.pi) - np.pi  # in [-pi, pi)
+                for s in (np.pi / 2, -np.pi / 2):
+                    if abs(r - s) < tol:
+                        a, b = ins.qubits
+                        out.rz(s, a)
+                        out.rz(s, b)
+                        out.cz(a, b)
+                        out.global_phase += s / 2 + np.pi * round((th - s) / (2 * np.pi))
+                        break
+                else:
+                    out.append(op, ins.qubits, ins.clbits)
+                continue
+        out.append(op, ins.qubits, ins.clbits)
+    return out
+
+
 def measured_qubits(compiled):
     """{clbit: physical qubit} of a compiled circuit."""
     return {compiled.find_bit(i.clbits[0]).index: compiled.find_bit(i.qubits[0]).index

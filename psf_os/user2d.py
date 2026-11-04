@@ -4,7 +4,8 @@ The user writes a logical circuit on Heron r2 qubit labels (QPY or OpenQASM 2/3)
 two-qubit gate on an edge of the heavy-hex lattice, measurements (if any) only at the end. psf-os then
   1. places it by translation (`lattice2d.place`: the first copy, in the fixed order, with no failed, masked or suspect
      element; no search), or refuses with the reasons;
-  2. compiles it with the rule's map-free pass manager and adds, in the same job:
+  2. compiles it with the rule's map-free pass manager (RZZ(+-pi/2) first written exactly as one CZ and two RZ,
+     compile.rzz_exact) and adds, in the same job:
      - the floor: the compiled circuit with every non-diagonal single-qubit gate removed (sx, x; what is left is CZ and
        RZ, so the ideal <Z_q> is 1 and the CZ count is the user's): readout and idle loss, for any circuit;
      - the mirror sentinel (`mirror2d.mirror`: U, barrier, U^dagger; acceptance: exactly twice U's CZ count);
@@ -137,7 +138,7 @@ def build_batch(dev, items, out, shots=4000, ring=40, sentinel_spec=None, max_se
     from psf_os import circuits as C
     from psf_os import job as J
     from psf_os import sentinel
-    from psf_os.compile import RuleCompiler, measured_qubits
+    from psf_os.compile import RuleCompiler, measured_qubits, rzz_exact
     tags = [t for t, _ in items]
     if not items:
         raise Refused("no circuit given")
@@ -155,7 +156,7 @@ def build_batch(dev, items, out, shots=4000, ring=40, sentinel_spec=None, max_se
         except RuntimeError as e:
             raise Refused(f"{tag}: no copy of the circuit's pattern qualifies on {dev.name}: {e}") from None
         phys = [m[q] for q in labels]
-        u = relabel(logical, m, dev.num_qubits)
+        u = rzz_exact(relabel(logical, m, dev.num_qubits))  # RZZ(+-pi/2): one CZ, not two
         cu = rc.pm.run(with_measure(u, phys))
         cz_u = M.cz_count(cu)
         cf = floor_of(cu)

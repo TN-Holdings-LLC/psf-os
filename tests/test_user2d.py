@@ -138,3 +138,44 @@ def test_batch_refuses_all_when_one_is_bad_and_duplicate_tags(tmp_path):
     assert not os.path.exists(tmp_path / "x" / "runs")
     with pytest.raises(U.Refused, match="distinct"):
         U.build_batch(dev, [("g", good), ("g", good)], str(tmp_path / "y"))
+
+
+def test_rzz_half_pi_is_one_cz_exactly(tmp_path):
+    import numpy as np
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    from psf_os.compile import rzz_exact
+    for th in (np.pi / 2, -np.pi / 2, 3 * np.pi / 2, np.pi / 2 + 4 * np.pi):
+        qc = QuantumCircuit(2)
+        qc.rzz(th, 0, 1)
+        r = rzz_exact(qc)
+        assert [i.operation.name for i in r.data] == ["rz", "rz", "cz"]
+        assert Operator(qc) == Operator(r)          # including the global phase
+    qc = QuantumCircuit(2)
+    qc.rzz(1.0, 0, 1)
+    assert [i.operation.name for i in rzz_exact(qc).data] == ["rzz"]
+    # through the user entrance: a kicked-Ising step written with rzz(-pi/2) costs one CZ per edge, mirror twice that
+    dev = Dv.fetch_fake("FakeKingston")
+    labels, edges = (3, 4, 5, 16, 23), ((3, 4), (4, 5), (3, 16), (16, 23))
+    qc = QuantumCircuit(30)
+    for _ in range(3):
+        for a, b in edges:
+            qc.rzz(-np.pi / 2, a, b)
+        for q in labels:
+            qc.rx(0.8, q)
+    rep = U.build(dev, qc, str(tmp_path / "k"), sentinel_spec=dict(kind="echo_clifford", D=24))
+    assert rep["cz"] == 3 * len(edges) and all(rep["checks"].values())
+    # and the compiled circuit still computes the same state (noiseless, against the logical circuit)
+    from qiskit.quantum_info import Statevector
+    from psf_os.compile import RuleCompiler
+    rc = RuleCompiler(dev)
+    small = QuantumCircuit(5)
+    idx = {q: k for k, q in enumerate(labels)}
+    for _ in range(3):
+        for a, b in edges:
+            small.rzz(-np.pi / 2, idx[a], idx[b])
+        for q in labels:
+            small.rx(0.8, idx[q])
+    ref = Statevector(small).probabilities()
+    got = Statevector(rzz_exact(small)).probabilities()
+    assert np.allclose(ref, got, atol=1e-12)
