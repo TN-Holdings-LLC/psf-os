@@ -10,7 +10,8 @@
     psf-os scan-ingest --device DEV_DIR --job JOB_DIR --runs RUNS --registry REG.json --out NEW_REG.json --label L
     psf-os status --registry REG.json [--device NAME] [--now ISO]
     psf-os result --job JOB_DIR --runs RUNS                score and logical counts
-    psf-os run2d --device DEV_DIR --circuit FILE.qpy|.qasm --out DIR [--registry REG.json] [--shots N]
+    psf-os run2d --device DEV_DIR --circuit FILE.qpy|.qasm [FILE ...] --out DIR [--registry REG.json] [--shots N]
+                 [--max-seconds S]                        several files: one job, each with its own floor and mirror
                                                            a 2D circuit on Heron r2 labels: placed by translation,
                                                            floor, mirror and ring sentinel added (psf_os.user2d)
     psf-os result2d --job JOB_DIR --runs RUNS [--answers ANSWERS.json]
@@ -75,7 +76,9 @@ def main(argv=None):
     r.add_argument("--runs", required=True)
     r2 = sp.add_parser("run2d")
     r2.add_argument("--device", required=True)
-    r2.add_argument("--circuit", required=True)
+    r2.add_argument("--circuit", required=True, nargs="+",
+                    help="one or more QPY/QASM files; with several, one job and each file's stem is its tag")
+    r2.add_argument("--max-seconds", type=float, default=60)
     r2.add_argument("--out", required=True)
     r2.add_argument("--registry", default=None)
     r2.add_argument("--shots", type=int, default=4000)
@@ -84,7 +87,8 @@ def main(argv=None):
     c2 = sp.add_parser("result2d")
     c2.add_argument("--job", required=True)
     c2.add_argument("--runs", required=True)
-    c2.add_argument("--answers", default=None, help="JSON {label: exact <Z>}")
+    c2.add_argument("--answers", default=None,
+                    help="JSON {label: exact <Z>}; for a batch job {tag: {label: exact <Z>}}")
     rp = sp.add_parser("repair2d")
     rp.add_argument("--device", required=True)
     rp.add_argument("--ledger", required=True)
@@ -159,14 +163,22 @@ def main(argv=None):
         avoid = R.avoid_paths(R.load(a.registry), dev.name, now) if a.registry else []
         if avoid:
             dev, _ = A.mask(dev, avoid, reason=f"registry at {now.isoformat(sep=' ')}")
+        spec = dict(kind="echo_clifford", D=24) if a.dry_clifford_sentinel else None
         try:
-            rep = U.build(dev, U.load(a.circuit), a.out, shots=a.shots,
-                          sentinel_spec=dict(kind="echo_clifford", D=24) if a.dry_clifford_sentinel else None)
+            if len(a.circuit) == 1:
+                rep = U.build(dev, U.load(a.circuit[0]), a.out, shots=a.shots, sentinel_spec=spec,
+                              max_seconds=a.max_seconds)
+                show = {k: rep[k] for k in ("device", "copy", "cz", "circuits", "qpu_seconds_model", "job", "runs")}
+            else:
+                items = [(os.path.splitext(os.path.basename(f))[0], U.load(f)) for f in a.circuit]
+                rep = U.build_batch(dev, items, a.out, shots=a.shots, sentinel_spec=spec, max_seconds=a.max_seconds)
+                show = dict(device=rep["device"], circuits=rep["circuits"], qpu_seconds_model=rep["qpu_seconds_model"],
+                            job=rep["job"], runs=rep["runs"],
+                            items={t: dict(copy=r["copy"], cz=r["cz"]) for t, r in rep["items"].items()})
         except U.Refused as e:
             print(f"REFUSED: {e}", file=sys.stderr)
             return 2
-        print(json.dumps({k: rep[k] for k in ("device", "copy", "cz", "circuits", "qpu_seconds_model", "job", "runs")},
-                         indent=1))
+        print(json.dumps(show, indent=1))
         return 0
     if a.cmd == "repair2d":
         from psf_os import allocate as A
@@ -187,7 +199,10 @@ def main(argv=None):
     if a.cmd == "result2d":
         from psf_os import user2d as U
         ans = json.load(open(a.answers)) if a.answers else None
-        print(json.dumps(U.card(a.job, a.runs, ans), indent=1))
+        if len(U.tags_of(a.job, a.runs)) == 1:
+            print(json.dumps(U.card(a.job, a.runs, ans), indent=1))
+        else:
+            print(json.dumps(U.cards(a.job, a.runs, ans), indent=1))
         return 0
     return 2
 

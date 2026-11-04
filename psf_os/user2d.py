@@ -125,64 +125,123 @@ def _record(dev, runs, name, role, kind, circuits, points, labels, mapping, extr
     return rec
 
 
-def build(dev, qc, out, shots=4000, ring=40, sentinel_spec=None, max_seconds=60, tag="user"):
-    """Place, compile and assemble the user's job with floor, mirror and ring sentinel. Returns a report dict."""
+def _tag_ok(tag):
+    return bool(tag) and all(ch.isalnum() or ch in "_.-" for ch in tag)
+
+
+def build_batch(dev, items, out, shots=4000, ring=40, sentinel_spec=None, max_seconds=60):
+    """Several user circuits in one job: items = [(tag, QuantumCircuit), ...]. Each circuit is placed by translation on
+    its own (its own copy), compiled, and given its own floor and mirror; one ring sentinel serves the whole job. If any
+    circuit is refused, nothing is written for any of them. Returns {"items": {tag: report}, "circuits", ...}."""
     import numpy as _np
     from psf_os import circuits as C
     from psf_os import job as J
     from psf_os import sentinel
     from psf_os.compile import RuleCompiler, measured_qubits
-    labels, edges, logical = analyse(qc, dev)
-    try:
-        dr, dc, m, reasons = L.place(dev, edges, labels)
-    except RuntimeError as e:
-        raise Refused(f"no copy of the circuit's pattern qualifies on {dev.name}: {e}") from None
+    tags = [t for t, _ in items]
+    if not items:
+        raise Refused("no circuit given")
+    if len(set(tags)) != len(tags) or not all(_tag_ok(t) for t in tags):
+        raise Refused(f"tags must be distinct and use letters, digits, '_', '.', '-' only: {tags}")
     rc = RuleCompiler(dev)
-    phys = [m[q] for q in labels]
-    u = relabel(logical, m, dev.num_qubits)
-    cu = rc.pm.run(with_measure(u, phys))
-    cz_u = M.cz_count(cu)
-    cf = floor_of(cu)
-    cm = rc.pm.run(M.mirror(u, phys))
-    want = {k: p for k, p in enumerate(phys)}
-    checks = dict(user_measures=measured_qubits(cu) == want, floor_cz=M.cz_count(cf) == cz_u,
-                  floor_diagonal=all(i.operation.name in ("cz", "rz", "barrier", "measure", "delay") for i in cf.data),
-                  mirror_cz=M.cz_count(cm) == 2 * cz_u, mirror_measures=measured_qubits(cm) == want)
+    want_all, prepared = {}, []
+    for tag, qc in items:
+        try:
+            labels, edges, logical = analyse(qc, dev)
+        except Refused as e:
+            raise Refused(f"{tag}: {e}") from None
+        try:
+            dr, dc, m, reasons = L.place(dev, edges, labels)
+        except RuntimeError as e:
+            raise Refused(f"{tag}: no copy of the circuit's pattern qualifies on {dev.name}: {e}") from None
+        phys = [m[q] for q in labels]
+        u = relabel(logical, m, dev.num_qubits)
+        cu = rc.pm.run(with_measure(u, phys))
+        cz_u = M.cz_count(cu)
+        cf = floor_of(cu)
+        cm = rc.pm.run(M.mirror(u, phys))
+        want = {k: p for k, p in enumerate(phys)}
+        checks = dict(user_measures=measured_qubits(cu) == want, floor_cz=M.cz_count(cf) == cz_u,
+                      floor_diagonal=all(i.operation.name in ("cz", "rz", "barrier", "measure", "delay")
+                                         for i in cf.data),
+                      mirror_cz=M.cz_count(cm) == 2 * cz_u, mirror_measures=measured_qubits(cm) == want)
+        if not all(checks.values()):
+            raise Refused(f"{tag}: acceptance failed: {checks}")
+        prepared.append((tag, labels, edges, dr, dc, m, reasons, cu, cf, cm, cz_u, checks))
     runs = os.path.join(out, "runs")
     os.makedirs(runs, exist_ok=True)
-    common = dict(labels=labels, mapping=m, shots=shots)
-    copy = dict(copy=dict(drow=dr, dcol=dc, passed_over=reasons), edges=[list(e) for e in edges])
-    _record(dev, runs, f"p2d_{tag}", "user", "user2d", [cu], [dict(input="u", setting="z")],
-            extra=dict(copy, cz=cz_u), valid=checks["user_measures"], **common)
-    _record(dev, runs, f"p2d_{tag}_floor", "floor", "user2d_floor", [cf], [dict(input="f", setting="z")],
-            extra=dict(cz=M.cz_count(cf)), valid=checks["floor_cz"] and checks["floor_diagonal"], **common)
-    _record(dev, runs, f"p2d_{tag}_mirror", "mirror", "user2d_mirror", [cm], [dict(input="m", setting="z")],
-            extra=dict(cz=M.cz_count(cm), cz_expected=2 * cz_u), valid=checks["mirror_cz"] and checks["mirror_measures"],
-            **common)
+    reps = {}
+    for tag, labels, edges, dr, dc, m, reasons, cu, cf, cm, cz_u, checks in prepared:
+        common = dict(labels=labels, mapping=m, shots=shots)
+        copy = dict(copy=dict(drow=dr, dcol=dc, passed_over=reasons), edges=[list(e) for e in edges])
+        _record(dev, runs, f"p2d_{tag}", "user", "user2d", [cu], [dict(input="u", setting="z")],
+                extra=dict(copy, cz=cz_u, tag=tag), valid=True, **common)
+        _record(dev, runs, f"p2d_{tag}_floor", "floor", "user2d_floor", [cf], [dict(input="f", setting="z")],
+                extra=dict(cz=M.cz_count(cf), tag=tag), valid=True, **common)
+        _record(dev, runs, f"p2d_{tag}_mirror", "mirror", "user2d_mirror", [cm], [dict(input="m", setting="z")],
+                extra=dict(cz=M.cz_count(cm), cz_expected=2 * cz_u, tag=tag), valid=True, **common)
+        reps[tag] = dict(labels=labels, edges=[list(e) for e in edges], copy=dict(drow=dr, dcol=dc),
+                         passed_over=reasons, mapping={str(q): m[q] for q in labels}, cz=cz_u, checks=checks)
     mq = measured_qubits(rc.compile(C.model_circuit(list(_np.zeros(C.n_model_angles(ring, 1))), ring, 1)))
     ring_q = [int(mq[j]) for j in range(ring)]
     sentinel.build(dev, runs, ring_q, shots, rc, spec=sentinel_spec)
-    if not all(checks.values()):
-        raise Refused(f"acceptance failed: {checks}")
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
-    rep = dict(device=dev.name, labels=labels, edges=[list(e) for e in edges], copy=dict(drow=dr, dcol=dc),
-               passed_over=reasons, mapping={str(q): m[q] for q in labels}, cz=cz_u, checks=checks,
-               circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], job=os.path.join(out, "job"),
-               runs=runs)
+    rep = dict(device=dev.name, items=reps, tags=tags, circuits=len(man["pubs"]),
+               qpu_seconds_model=man["qpu_seconds_model"], job=os.path.join(out, "job"), runs=runs)
     json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
     return rep
 
 
-def card(job_dir, runs, answers=None):
-    """The answer card. answers: {label: exact <Z>} (any subset) or None."""
+def build(dev, qc, out, shots=4000, ring=40, sentinel_spec=None, max_seconds=60, tag="user"):
+    """Place, compile and assemble the user's job with floor, mirror and ring sentinel. Returns a report dict."""
+    b = build_batch(dev, [(tag, qc)], out, shots=shots, ring=ring, sentinel_spec=sentinel_spec,
+                    max_seconds=max_seconds)
+    rep = dict(device=b["device"], **b["items"][tag], circuits=b["circuits"],
+               qpu_seconds_model=b["qpu_seconds_model"], job=b["job"], runs=b["runs"])
+    json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
+    return rep
+
+
+def _tag_of(name, rec):
+    if "tag" in rec:
+        return rec["tag"]
+    base = name[len("p2d_"):]
+    for suf in ("_floor", "_mirror"):
+        if base.endswith(suf):
+            return base[: -len(suf)]
+    return base
+
+
+def tags_of(job_dir, runs):
+    """The tags of the user circuits in a finished job, in the job's order."""
+    from psf_os import job as J
+    return [_tag_of(n, r) for n, (r, _) in J.read(job_dir, runs).items()
+            if r.get("psfos_job", {}).get("kind") == "user2d"]
+
+
+def cards(job_dir, runs, answers_by_tag=None):
+    """{tag: answer card} for every user circuit of the job. answers_by_tag: {tag: {label: exact <Z>}} (any subset)."""
+    answers_by_tag = answers_by_tag or {}
+    return {t: card(job_dir, runs, answers_by_tag.get(t), tag=t) for t in tags_of(job_dir, runs)}
+
+
+def card(job_dir, runs, answers=None, tag=None):
+    """The answer card of one user circuit. answers: {label: exact <Z>} (any subset) or None. tag: which circuit of a
+    batch job (None: the job must hold exactly one)."""
     from psf_os import job as J
     from psf_os import sentinel
     from psf_os.kim import z_values
     got = {}
     labels = edges = None
-    for name, (rec, cc) in J.read(job_dir, runs).items():
+    read = J.read(job_dir, runs)
+    if tag is None:
+        ts = {_tag_of(n, r) for n, (r, _) in read.items() if r.get("psfos_job", {}).get("kind") == "user2d"}
+        if len(ts) != 1:
+            raise ValueError(f"the job holds {len(ts)} user circuits {sorted(ts)}: name one with tag=")
+        tag = ts.pop()
+    for name, (rec, cc) in read.items():
         kind = rec.get("psfos_job", {}).get("kind")
-        if kind in ("user2d", "user2d_floor", "user2d_mirror"):
+        if kind in ("user2d", "user2d_floor", "user2d_mirror") and _tag_of(name, rec) == tag:
             p = rec["points"][0]
             z, se = z_values(cc[(p["input"], "z")], len(rec["labels"]))
             got[kind] = (z, se)
@@ -192,7 +251,7 @@ def card(job_dir, runs, answers=None):
     (z, se), (z0, _), (zm, _) = got["user2d"], got["user2d_floor"], got["user2d_mirror"]
     n = len(labels)
     fl = M.flags(z0, zm, labels=labels, edges=edges)
-    out = dict(sentinel=sentinel.verdict(job_dir, runs)["status"], labels=labels,
+    out = dict(tag=tag, sentinel=sentinel.verdict(job_dir, runs)["status"], labels=labels,
                M=float(z.mean()), M_two_se=float(2 * np.sqrt((se ** 2).sum()) / n),
                floor_mean=float(z0.mean()), mirror_mean=float(zm.mean()), mirror_flags=fl,
                qubits=[dict(q=q, z=float(z[k]), two_se=float(2 * se[k]), floor=float(z0[k]), mirror=float(zm[k]))

@@ -86,3 +86,55 @@ def test_cli_run2d_and_card_on_a_local_run(tmp_path):
     assert c["mirror_flags"]["qubits"] == []
     assert c["answered"]["qubits"] == len(rep["labels"])
     assert c["sentinel"] == "CLEAN"
+
+
+def _clifford(labels, edges):
+    from qiskit import QuantumCircuit
+    qc = QuantumCircuit(max(labels) + 1)
+    for q in labels:
+        qc.h(q)
+    for a, b in edges:
+        qc.cz(a, b)
+    for q in labels:
+        qc.h(q)
+    return qc
+
+
+def test_batch_two_circuits_one_job_cards_per_tag(tmp_path):
+    from qiskit import qpy
+    dev = Dv.fetch_fake("FakeKingston")
+    dev.save(str(tmp_path / "dev"))
+    a = _clifford((3, 4, 5, 16, 23), ((3, 4), (4, 5), (3, 16), (16, 23)))
+    b = _clifford((60, 61, 62), ((60, 61), (61, 62)))
+    for name, qc in (("a1", a), ("b2", b)):
+        with open(tmp_path / f"{name}.qpy", "wb") as f:
+            qpy.dump(qc, f)
+    out = tmp_path / "run"
+    assert cli.main(["run2d", "--device", str(tmp_path / "dev"), "--circuit", str(tmp_path / "a1.qpy"),
+                     str(tmp_path / "b2.qpy"), "--out", str(out), "--dry-clifford-sentinel"]) == 0
+    rep = json.load(open(out / "report.json"))
+    assert rep["tags"] == ["a1", "b2"] and rep["circuits"] == 2 * 3 + 4
+    assert rep["items"]["a1"]["cz"] == 4 and rep["items"]["b2"]["cz"] == 2
+    sim.submit(rep["job"], "noiseless", seed=7)
+    assert U.tags_of(rep["job"], rep["runs"]) == ["a1", "b2"]
+    cs = U.cards(rep["job"], rep["runs"], {"b2": {"60": 1.0, "61": 1.0}})
+    assert set(cs) == {"a1", "b2"}
+    assert cs["a1"]["labels"] == [3, 4, 5, 16, 23] and cs["b2"]["labels"] == [60, 61, 62]
+    assert "answered" not in cs["a1"] and cs["b2"]["answered"]["qubits"] == 2
+    for c in cs.values():
+        assert abs(c["floor_mean"] - 1) < 1e-9 and abs(c["mirror_mean"] - 1) < 1e-9 and c["sentinel"] == "CLEAN"
+    with pytest.raises(ValueError, match="name one"):
+        U.card(rep["job"], rep["runs"])
+
+
+def test_batch_refuses_all_when_one_is_bad_and_duplicate_tags(tmp_path):
+    from qiskit import QuantumCircuit
+    dev = Dv.fetch_fake("FakeKingston")
+    bad = QuantumCircuit(10)
+    bad.cz(3, 5)
+    good = _clifford((3, 4), ((3, 4),))
+    with pytest.raises(U.Refused, match="bad: .*not an edge"):
+        U.build_batch(dev, [("good", good), ("bad", bad)], str(tmp_path / "x"))
+    assert not os.path.exists(tmp_path / "x" / "runs")
+    with pytest.raises(U.Refused, match="distinct"):
+        U.build_batch(dev, [("g", good), ("g", good)], str(tmp_path / "y"))
