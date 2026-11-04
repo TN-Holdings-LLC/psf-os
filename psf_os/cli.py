@@ -15,6 +15,9 @@
                                                            floor, mirror and ring sentinel added (psf_os.user2d)
     psf-os result2d --job JOB_DIR --runs RUNS [--answers ANSWERS.json]
                                                            the answer card (value +- 2 SE, floor, mirror flags, sentinel)
+    psf-os repair2d --device DEV_DIR --ledger LEDGER.json --rule a|b --release expiry|early --out LOG.json
+                    [--registry REG.json] [--now ISO]      the self-repair chain for the P6 patch (psf_os.repair2d):
+                                                           confirmed exclusions, A's and B's copies, the log
 
 A registry file is never overwritten: scan-ingest writes the next one (TOQB's list_after convention).
 """
@@ -82,6 +85,14 @@ def main(argv=None):
     c2.add_argument("--job", required=True)
     c2.add_argument("--runs", required=True)
     c2.add_argument("--answers", default=None, help="JSON {label: exact <Z>}")
+    rp = sp.add_parser("repair2d")
+    rp.add_argument("--device", required=True)
+    rp.add_argument("--ledger", required=True)
+    rp.add_argument("--rule", choices=("a", "b"), required=True)
+    rp.add_argument("--release", choices=("expiry", "early"), required=True)
+    rp.add_argument("--out", required=True)
+    rp.add_argument("--registry", default=None)
+    rp.add_argument("--now", default=None)
     a = p.parse_args(argv)
     now = (dt.datetime.fromisoformat(a.now) if getattr(a, "now", None) else P.now_cet())
 
@@ -156,6 +167,22 @@ def main(argv=None):
             return 2
         print(json.dumps({k: rep[k] for k in ("device", "copy", "cz", "circuits", "qpu_seconds_model", "job", "runs")},
                          indent=1))
+        return 0
+    if a.cmd == "repair2d":
+        from psf_os import allocate as A
+        from psf_os import ising2d as I
+        from psf_os import ledger as Lg
+        from psf_os import repair2d as Rp
+        dev = Dv.Device.load(a.device)
+        avoid = R.avoid_paths(R.load(a.registry), dev.name, now) if a.registry else []
+        if avoid:
+            dev, _ = A.mask(dev, avoid, reason=f"registry at {now.isoformat(sep=' ')}")
+        log = Rp.chain(dev, Lg.load(a.ledger), now, I.EDGES, I.QUBITS, rule=a.rule, release=a.release,
+                       offsets=I.OFFSETS)
+        log["ledger_sha256"] = R.sha256_file(a.ledger)
+        log["registry_sha256"] = R.sha256_file(a.registry) if a.registry else None
+        Rp.save_log(log, a.out)
+        print(json.dumps({k: log[k] for k in ("device", "rule", "release", "excluded", "status", "price")}, indent=1))
         return 0
     if a.cmd == "result2d":
         from psf_os import user2d as U
