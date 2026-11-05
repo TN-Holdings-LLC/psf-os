@@ -44,6 +44,36 @@ computed and sealed before the runs.
   ([fez](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/corr-2026-11-04), [marrakesh](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/corr-marrakesh-2026-11-04)) worked on one device and not fully on the
   other; it is on hold.
 
+## The daily record (from 2026-11-05)
+
+Every night, on the devices with a short queue, psf-os solves a fixed problem and a new one from a pool whose answers
+were sealed (hashes committed) before release; raw values, no correction, failures recorded. Rules:
+[`prereg/daily/standing_rules.md`](https://github.com/TN-Holdings-LLC/TOQB/blob/main/prereg/daily/standing_rules.md); the record:
+[`results/daily/RECORD.md`](https://github.com/TN-Holdings-LLC/TOQB/blob/main/results/daily/RECORD.md). Each line gives the declared verdict and, beside
+it, the retained share of the signal (M / M_exact) and the normalised error: the declared criterion is an absolute
+difference, so a large answer can DIFFER while keeping as much signal as a small one that AGREES.
+
+## Reproduce
+
+Three levels, from the cheapest. Each needs psf-os and a checkout of [TOQB](https://github.com/TN-Holdings-LLC/TOQB), where the records live.
+
+```
+git clone https://github.com/TN-Holdings-LLC/psf-os && pip install "./psf-os[sim]"
+git clone https://github.com/TN-Holdings-LLC/TOQB && cd TOQB
+```
+
+1. **Re-score from the committed counts (no IBM account, under a minute).** `python reproduce.py` runs every scorer
+   unchanged on a copy of each result's committed raw counts and compares with its committed `scores.json`. On
+   2026-11-05, in a fresh environment with qiskit 2.6.1, all 9 results came out the same.
+2. **Recompute the exact answers.** The circuits are in each result folder (`circuits/*.qpy` and `.qasm`); the
+   answers were computed by the scripts named in each folder's README (CPU for shallow depths, `gpu/*_answers.py` on a
+   GPU for the deep light cones) and are checked there by two independent methods.
+3. **Run the same circuits on a device.** `psf-os fetch` the device, `psf-os run2d` with the result's circuit files,
+   `psf-os submit`, `psf-os collect`, then the result's scorer. A rebuild with another qiskit version gives the same
+   gates (checked gate by gate, 2026-11-05) but a different QPY file hash.
+
+Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Holdings-LLC/TOQB/blob/main/results/ENVIRONMENT.md).
+
 ## Layers for 2D circuits
 
 | module | does |
@@ -89,6 +119,7 @@ any of them is the owner's decision.
 | bridge | TOQB's `s2rc_device submit --local` runs a psf-os job folder, and psf-os scores what it writes |
 | S1-S6 | sentinels: the user's circuits byte-identical with or without them; CLEAN without noise; a coupler planted after placement is flagged DEAD with a run around it; the finding is gray for that day only and adds nothing to LISTED; the time-model cap stops an over-long job; no map is read |
 | Q1-Q4 | practice problems: each exact answer agrees by two independent methods; full score without noise; with planted two-qubit depolarizing errors the cluster parity and P1's read stabilizers are better on the avoiding ring; no map is read |
+| user2d | P6 as a user circuit lands like P6; a gate off the lattice is refused; the floor keeps the CZs and returns to 0; run2d and the card on a local run; a batch of two circuits in one job with a card per circuit; one bad circuit refuses the batch; `rzz(+-pi/2)` is one CZ with the same unitary |
 | ported | 31 of TOQB's tests (defect_list, safe_loop, qca, kising_echo, echo_tomo) on the ported code |
 
 ## Commands
