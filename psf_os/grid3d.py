@@ -617,10 +617,13 @@ def probe_build(dev, L, M, N, t, theta, out, k=4, shots=2000, layout="fold", max
     return rep
 
 
-def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD):
-    """The probe's reading: per candidate its lowest |0> floor, its highest |1> floor (when probed) and the qubits on
-    the wrong side of +-threshold; `chosen` is the first candidate (fixed order) with none, `avoid` the translations
-    before it (to pass to prepare)."""
+def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD, rule="relative"):
+    """The probe's reading: per candidate the qubits that stand out. rule "relative" (default since the 11-06 replay:
+    at depth t = 3 the uniform model already brings every floor to about 0.62-0.68, so a fixed line rejects every
+    candidate): over all probe readings of the job, a |0> floor below median - max(5 x 1.4826 MAD, 0.05) or a |1> floor
+    above median + max(5 x 1.4826 MAD, 0.05) (rule R's form) marks the qubit. rule "absolute": outside +-threshold.
+    `chosen` is the first candidate (fixed order) with no marked qubit, `avoid` the translations before it."""
+    import numpy as np
     from psf_os import job as J
     from psf_os.kim import z_values
     read = J.read(job_dir, runs)
@@ -634,14 +637,28 @@ def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD):
         vals = {int(q): float(v) for q, v in zip(rec["labels"], z)}
         if pr.get("start", 0) == 0:
             r["floor"], r["min_floor"] = vals, min(vals.values())
-            r["low"] += sorted(q for q, v in vals.items() if v < threshold)
         else:
             r["floor1"], r["max_floor1"] = vals, max(vals.values())
-            r["low"] += sorted(q for q, v in vals.items() if v > -threshold)
     rows = [per[i] for i in sorted(per)]
+
+    def line(vals, side):
+        v = np.array(vals)
+        med = float(np.median(v))
+        w = max(5 * 1.4826 * float(np.median(np.abs(v - med))), 0.05)
+        return med - w if side < 0 else med + w
+
+    if rule == "relative":
+        l0 = line([v for r in rows for v in r.get("floor", {}).values()], -1)
+        f1 = [v for r in rows for v in r.get("floor1", {}).values()]
+        l1 = line(f1, +1) if f1 else None
+    else:
+        l0, l1 = threshold, -threshold
     for r in rows:
-        r["low"] = sorted(set(r["low"]))
+        low = [q for q, v in r.get("floor", {}).items() if v < l0]
+        if l1 is not None:
+            low += [q for q, v in r.get("floor1", {}).items() if v > l1]
+        r["low"] = sorted(set(low))
     chosen = next((r for r in rows if not r["low"]), None)
     upto = rows.index(chosen) if chosen else len(rows)
-    return dict(threshold=threshold, candidates=rows, chosen=None if chosen is None else chosen["index"],
-                avoid=[(r["r0"], r["c0"]) for r in rows[:upto]])
+    return dict(rule=rule, threshold=threshold, line0=l0, line1=l1, candidates=rows,
+                chosen=None if chosen is None else chosen["index"], avoid=[(r["r0"], r["c0"]) for r in rows[:upto]])
