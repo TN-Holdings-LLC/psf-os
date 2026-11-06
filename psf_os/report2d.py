@@ -132,3 +132,46 @@ def extended_cards(job_dir, runs, answers_by_tag=None):
     from psf_os import user2d as U
     answers_by_tag = answers_by_tag or {}
     return {t: extended(job_dir, runs, answers_by_tag.get(t), tag=t) for t in U.tags_of(job_dir, runs)}
+
+
+# ---------------------------------------------------------------------------------------- the ring sentinel's ledger
+# Owner, 2026-11-06 (W3, plan A): a stretch of the ring sentinel that is DEAD job after job goes into a ledger, and
+# the sentinel is also read with the ledger's qubits set aside. The circuits do not change; the declared verdict is
+# printed unchanged beside the re-read one. Only observations from days before the job's day count (prospective).
+
+def ring_ledger(jobs):
+    """jobs: [(date 'YYYY-MM-DD', job_dir, runs_dir)] -> {device: {qubit: [dates on which it was in a DEAD run, one
+    entry per job]}, plus "_jobs": {device: [dates of every job read]}}."""
+    from psf_os import ring2d as RG
+    led = {"_jobs": {}}
+    for row in RG.history(jobs):
+        dev = row["device"]
+        led["_jobs"].setdefault(dev, []).append(row["date"])
+        d = led.setdefault(dev, {})
+        for q in row["dead"]:
+            d.setdefault(str(q), []).append(row["date"])
+    return led
+
+
+def known_dead(ledger, device, before, min_jobs=3, min_days=2):
+    """Qubits in DEAD runs in at least `min_jobs` jobs on at least `min_days` days, counting only days before `before`."""
+    out = []
+    for q, dates in (ledger.get(device) or {}).items():
+        prior = [d for d in dates if d < before]
+        if len(prior) >= min_jobs and len(set(prior)) >= min_days:
+            out.append(int(q))
+    return sorted(out)
+
+
+def sentinel_beside_ledger(job_dir, runs, ledger, date, min_jobs=3, min_days=2):
+    """The job's sentinel verdict as declared and re-read with the ledger's known qubits set aside (report only)."""
+    from psf_os import ring2d as RG
+    h = RG.history([(date, job_dir, runs)])
+    if not h:
+        return dict(status_declared="NONE")
+    row = h[0]
+    known = known_dead(ledger, row["device"], date, min_jobs, min_days)
+    v = RG.verdict_beside_ledger(row, known)
+    return dict(device=row["device"], date=date, status_declared=v["status_all"], status_beside_ledger=v["status_new"],
+                known_set_aside=v["set_aside"], new_dead=v["new_dead"],
+                rule=f"known: in a DEAD run in >= {min_jobs} jobs on >= {min_days} days before {date}")

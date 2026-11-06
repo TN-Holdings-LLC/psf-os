@@ -17,6 +17,9 @@
     psf-os result2d --job JOB_DIR --runs RUNS [--answers ANSWERS.json] [--extended]
                                                            the answer card (value +- 2 SE, floor, mirror flags, sentinel);
                                                            --extended: + report-only flags, retention, notes (report2d)
+    psf-os ringledger --jobs JOBS.json --out LEDGER.json   the ring sentinel's ledger: which qubits were in DEAD runs,
+                                                           job by job (report2d); result2d --extended --ring-ledger L
+                                                           --date D also reads the sentinel with them set aside
     psf-os gatehash --qpy FILE.qpy [...]                   a hash of the gate list (name, qubits, angles to 1e-10) that
                                                            does not change with Qiskit's QPY format (psf_os.gatehash)
     psf-os repair2d --device DEV_DIR --ledger LEDGER.json --rule a|b --release expiry|early --out LOG.json
@@ -94,6 +97,12 @@ def main(argv=None):
                     help="JSON {label: exact <Z>}; for a batch job {tag: {label: exact <Z>}}")
     c2.add_argument("--extended", action="store_true",
                     help="add the report-only blocks of psf_os.report2d (flags, retention, notes); values unchanged")
+    c2.add_argument("--ring-ledger", default=None, help="with --extended: a ledger of ringledger; the sentinel is also "
+                    "read with the ledger's known-dead qubits set aside (report only)")
+    c2.add_argument("--date", default=None, help="with --ring-ledger: the job's day YYYY-MM-DD (only earlier days count)")
+    rl = sp.add_parser("ringledger")
+    rl.add_argument("--jobs", required=True, help="JSON [[date, job_dir, runs_dir], ...]")
+    rl.add_argument("--out", required=True)
     gh = sp.add_parser("gatehash")
     gh.add_argument("--qpy", nargs="+", required=True, help="QPY files (e.g. JOB_DIR/circuits.qpy, RUNS/*.qpy)")
     rp = sp.add_parser("repair2d")
@@ -219,14 +228,31 @@ def main(argv=None):
         if a.extended:
             from psf_os import report2d as X
             if len(U.tags_of(a.job, a.runs)) == 1:
-                print(json.dumps(X.extended(a.job, a.runs, ans), indent=1))
+                res = X.extended(a.job, a.runs, ans)
             else:
-                print(json.dumps(X.extended_cards(a.job, a.runs, ans), indent=1))
+                res = X.extended_cards(a.job, a.runs, ans)
+            if a.ring_ledger:
+                if not a.date:
+                    print("--ring-ledger needs --date (the job's day)", file=sys.stderr)
+                    return 2
+                side = X.sentinel_beside_ledger(a.job, a.runs, json.load(open(a.ring_ledger)), a.date)
+                res = dict(cards=res, sentinel_beside_ledger=side) if len(U.tags_of(a.job, a.runs)) > 1 else \
+                    dict(res, sentinel_beside_ledger=side)
+            print(json.dumps(res, indent=1))
             return 0
         if len(U.tags_of(a.job, a.runs)) == 1:
             print(json.dumps(U.card(a.job, a.runs, ans), indent=1))
         else:
             print(json.dumps(U.cards(a.job, a.runs, ans), indent=1))
+        return 0
+    if a.cmd == "ringledger":
+        from psf_os import report2d as X
+        if os.path.exists(a.out):
+            print(f"{a.out} exists: a ledger is never overwritten", file=sys.stderr)
+            return 2
+        led = X.ring_ledger([tuple(j) for j in json.load(open(a.jobs))])
+        json.dump(led, open(a.out, "w"), indent=1)
+        print(json.dumps({k: (len(v) if k != "_jobs" else {d: len(x) for d, x in v.items()}) for k, v in led.items()}))
         return 0
     if a.cmd == "gatehash":
         from psf_os import gatehash as G

@@ -26,3 +26,12 @@ def test_verdict_beside_ledger_sets_known_sites_aside_only():
     r2 = _row("d3", [5, 6, 7, 8, 14, 15, 16])  # a new stretch is still found
     v2 = RG.verdict_beside_ledger(r2, [105, 106, 107, 108])
     assert v2["status_new"] == "DEAD" and v2["new_dead"] == [114, 115, 116]
+
+
+def test_known_dead_counts_only_earlier_days():
+    from psf_os import report2d as X
+    led = {"ibm_x": {"105": ["d1", "d1", "d2"], "106": ["d1", "d2", "d3"], "107": ["d1", "d1", "d1"]}}
+    assert X.known_dead(led, "ibm_x", "d3") == [105]          # 106 has only two jobs before d3; 107 one day
+    assert X.known_dead(led, "ibm_x", "d4") == [105, 106]
+    assert X.known_dead(led, "ibm_x", "d2") == []
+    assert X.known_dead(led, "other", "d9") == []
