@@ -196,3 +196,26 @@ def test_excited_probe_sees_a_fast_relaxing_qubit(tmp_path):
     ch = G.probe_choose(str(man), str(tmp_path / "p/runs"))
     c0 = ch["candidates"][0]
     assert c0["floor"][bad] > 0.95 and c0["floor1"][bad] > -0.8 and ch["chosen"] == 1
+
+
+def test_x_echo_sees_a_phase_error_the_floors_cannot(tmp_path):
+    # a ZZ (phase) error on one coupler of candidate 0's bridge path: the |0> and |1> floors stay at +-1, the X echo
+    # drops there, and the candidate is passed over
+    import json
+    from qiskit import qpy
+    from psf_os import sim
+    dev = _fez_like()
+    rep = G.probe_build(dev, 4, 2, 2, 1, np.pi / 2, str(tmp_path / "p"), k=2, shots=1000, excited=True)
+    qc, placed, used, _ = G.physical(dev, 4, 2, 2, 1, np.pi / 2, layout="fold")
+    pair = sorted({tuple(sorted(qc.find_bit(q).index for q in i.qubits)) for i in qc.data if i.operation.name == "cx"})[0]
+    assert not set(pair) & set(rep["candidates"][1]["used"])
+    rows = sim.run_circuits(qpy.load(open(tmp_path / "p/job/circuits.qpy", "rb")), 1000, seed=5,
+                            pauli=([pair], 0.3, "zz"))
+    man = tmp_path / "p/job"
+    json.dump(dict(job_id="local", submitted="-", local=True, backend=dev.name), open(man / "submission.json", "w"))
+    json.dump(dict(fetched="-", job_id="local", status="DONE", rows=rows), open(man / "raw_counts.json", "w"))
+    ch = G.probe_choose(str(man), str(tmp_path / "p/runs"))
+    c0 = ch["candidates"][0]
+    assert c0["min_floor"] > 0.99 and c0["max_floor1"] < -0.99      # the floors do not see it
+    assert c0["min_echo_x"] < 0.8 and set(c0["low"]) & set(pair)    # the X echo does
+    assert ch["chosen"] == 1

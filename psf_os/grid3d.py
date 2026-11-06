@@ -565,11 +565,16 @@ def build(dev, L, M, N, t, theta, out, shots=4000, max_seconds=60, tag="g3d", la
 PROBE_THRESHOLD = 0.8
 
 
-def probe_records(dev, runs, L, M, N, t, theta, k=4, shots=2000, layout="fold", excited=True, merge=True, rc=None):
+def probe_records(dev, runs, L, M, N, t, theta, k=4, shots=2000, layout="fold", excited=True, merge=True, rc=None,
+                  echo_x=True):
     """Probe records for the first k qualifying translations (fixed order) into `runs`: probe_<i> is the floor of the
     placed circuit at depth t (the CZ skeleton on |0>, every touched qubit read, bridges included; ideal +1), and with
     `excited` probe1_<i> the same skeleton started from |1> on every touched qubit (ideal -1: a qubit that relaxes fast,
-    which the |0> floor cannot see, reads above it). Returns the candidates [{index, r0, c0, used, avoid}]."""
+    which the |0> floor cannot see, reads above it). With `echo_x` (owner 2026-11-06 15:37 CET: test the bridges before
+    using them) probex_<i>: every touched qubit in |+>, the skeleton, barrier, the skeleton's inverse, back to Z and read
+    (ideal +1): every coupler the candidate uses is driven twice in the X basis, so a phase error on a CZ, which the |0>
+    and |1> floors cannot see (CZ only adds a phase to computational states), shows. Returns the candidates
+    [{index, r0, c0, used, avoid}]."""
     from qiskit import QuantumCircuit
     from psf_os import user2d as U
     from psf_os.compile import RuleCompiler, rzz_exact
@@ -595,6 +600,24 @@ def probe_records(dev, runs, L, M, N, t, theta, k=4, shots=2000, layout="fold", 
             ce.compose(cf, inplace=True)
             U._record(dev, runs, f"probe1_{i}", "floor", "user2d_floor", [ce], [dict(input="f", setting="z")],
                       extra=dict(tag=f"probe1_{i}", probe=dict(where, t=t, index=i, start=1)), **common)
+        if echo_x:
+            from qiskit import QuantumCircuit as QC
+            from qiskit.transpiler import generate_preset_pass_manager
+            body = cf.remove_final_measurements(inplace=False)
+            ex = QC(body.num_qubits, len(used))
+            for q in used:
+                ex.h(q)
+            ex.compose(body, inplace=True)
+            ex.barrier()
+            ex.compose(body.inverse(), inplace=True)
+            for q in used:
+                ex.h(q)
+            for kk, q in enumerate(used):
+                ex.measure(q, kk)
+            pm0 = generate_preset_pass_manager(0, target=rc.target, initial_layout=list(range(body.num_qubits)),
+                                               routing_method="none", seed_transpiler=0)
+            U._record(dev, runs, f"probex_{i}", "floor", "user2d_floor", [pm0.run(ex)], [dict(input="f", setting="z")],
+                      extra=dict(tag=f"probex_{i}", probe=dict(where, t=t, index=i, start="x")), **common)
         cands.append(dict(index=i, used=used, r0=where["r0"], c0=where["c0"], avoid=[list(v) for v in avoid]))
         avoid.append((where["r0"], where["c0"]))
     if not cands:
@@ -603,11 +626,13 @@ def probe_records(dev, runs, L, M, N, t, theta, k=4, shots=2000, layout="fold", 
 
 
 def probe_build(dev, L, M, N, t, theta, out, k=4, shots=2000, layout="fold", max_seconds=60, excited=False):
-    """One job of probe records only (`probe_records`); the two-job form of 11-06 (excited=False reproduces it)."""
+    """One job of probe records only (`probe_records`); the two-job form of 11-06 (excited=False reproduces it: no
+    |1> floor and no X echo)."""
     from psf_os import job as J
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
-    cands = probe_records(dev, runs, L, M, N, t, theta, k=k, shots=shots, layout=layout, excited=excited)
+    cands = probe_records(dev, runs, L, M, N, t, theta, k=k, shots=shots, layout=layout, excited=excited,
+                          echo_x=excited)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
     rep = dict(device=dev.name, L=L, M=M, N=N, t=t, theta=theta, k=len(cands),
                candidates=[{x: c[x] for x in ("index", "used", "r0", "c0")} | dict(layout="fold") for c in cands],
@@ -641,6 +666,8 @@ def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD, rule="relative"):
         vals = {int(q): float(v) for q, v in zip(rec["labels"], z)}
         if pr.get("start", 0) == 0:
             r["floor"], r["min_floor"] = vals, min(vals.values())
+        elif pr.get("start") == "x":
+            r["echo_x"], r["min_echo_x"] = vals, min(vals.values())
         else:
             r["floor1"], r["max_floor1"] = vals, max(vals.values())
     rows = [per[i] for i in sorted(per)]
@@ -655,24 +682,29 @@ def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD, rule="relative"):
         l0 = line([v for r in rows for v in r.get("floor", {}).values()], -1)
         f1 = [v for r in rows for v in r.get("floor1", {}).values()]
         l1 = line(f1, +1) if f1 else None
+        fx = [v for r in rows for v in r.get("echo_x", {}).values()]
+        lx = line(fx, -1) if fx else None
     else:
-        l0, l1 = threshold, -threshold
+        l0, l1, lx = threshold, -threshold, threshold
     for r in rows:
         low = [q for q, v in r.get("floor", {}).items() if v < l0]
         if l1 is not None:
             low += [q for q, v in r.get("floor1", {}).items() if v > l1]
+        if lx is not None:
+            low += [q for q, v in r.get("echo_x", {}).items() if v < lx]
         r["low"] = sorted(set(low))
     for r in rows:  # the candidate's weakest touched qubit, bridges included: min of |0> floors and of -|1> floors
-        r["worst"] = min([v for v in r.get("floor", {}).values()] + [-v for v in r.get("floor1", {}).values()])
+        r["worst"] = min([v for v in r.get("floor", {}).values()] + [-v for v in r.get("floor1", {}).values()]
+                         + [v for v in r.get("echo_x", {}).values()])
     if rule == "best":
         # owner 2026-11-06 15:21 CET ("white of white"): among the candidates with no marked qubit, the one whose
         # weakest qubit reads best (ties: the fixed order). Reads only the probes, never an answer.
         clean = [r for r in rows if not r["low"]] or rows
         chosen = max(clean, key=lambda r: (r["worst"], -r["index"]))
         avoid = [(r["r0"], r["c0"]) for r in rows if r is not chosen]
-        return dict(rule=rule, threshold=threshold, line0=l0, line1=l1, candidates=rows, chosen=chosen["index"],
-                    avoid=avoid, passed_none=not any(not r["low"] for r in rows))
+        return dict(rule=rule, threshold=threshold, line0=l0, line1=l1, line_x=lx, candidates=rows,
+                    chosen=chosen["index"], avoid=avoid, passed_none=not any(not r["low"] for r in rows))
     chosen = next((r for r in rows if not r["low"]), None)
     upto = rows.index(chosen) if chosen else len(rows)
-    return dict(rule=rule, threshold=threshold, line0=l0, line1=l1, candidates=rows,
+    return dict(rule=rule, threshold=threshold, line0=l0, line1=l1, line_x=lx, candidates=rows,
                 chosen=None if chosen is None else chosen["index"], avoid=[(r["r0"], r["c0"]) for r in rows[:upto]])
