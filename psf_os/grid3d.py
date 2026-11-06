@@ -622,7 +622,11 @@ def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD, rule="relative"):
     at depth t = 3 the uniform model already brings every floor to about 0.62-0.68, so a fixed line rejects every
     candidate): over all probe readings of the job, a |0> floor below median - max(5 x 1.4826 MAD, 0.05) or a |1> floor
     above median + max(5 x 1.4826 MAD, 0.05) (rule R's form) marks the qubit. rule "absolute": outside +-threshold.
-    `chosen` is the first candidate (fixed order) with no marked qubit, `avoid` the translations before it."""
+    `chosen` is the first candidate (fixed order) with no marked qubit, `avoid` the translations before it.
+    rule "best" (owner 2026-11-06 15:21 CET, "white of white"): marks as "relative" does, then takes, among the
+    candidates with no marked qubit (all, if none is clean), the one whose weakest touched qubit (bridges included;
+    min of the |0> floors and of minus the |1> floors) reads best; `avoid` lists every other candidate. A ranking by
+    our own probes only, never by an answer or an arm's error."""
     import numpy as np
     from psf_os import job as J
     from psf_os.kim import z_values
@@ -647,7 +651,7 @@ def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD, rule="relative"):
         w = max(5 * 1.4826 * float(np.median(np.abs(v - med))), 0.05)
         return med - w if side < 0 else med + w
 
-    if rule == "relative":
+    if rule in ("relative", "best"):
         l0 = line([v for r in rows for v in r.get("floor", {}).values()], -1)
         f1 = [v for r in rows for v in r.get("floor1", {}).values()]
         l1 = line(f1, +1) if f1 else None
@@ -658,6 +662,16 @@ def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD, rule="relative"):
         if l1 is not None:
             low += [q for q, v in r.get("floor1", {}).items() if v > l1]
         r["low"] = sorted(set(low))
+    for r in rows:  # the candidate's weakest touched qubit, bridges included: min of |0> floors and of -|1> floors
+        r["worst"] = min([v for v in r.get("floor", {}).values()] + [-v for v in r.get("floor1", {}).values()])
+    if rule == "best":
+        # owner 2026-11-06 15:21 CET ("white of white"): among the candidates with no marked qubit, the one whose
+        # weakest qubit reads best (ties: the fixed order). Reads only the probes, never an answer.
+        clean = [r for r in rows if not r["low"]] or rows
+        chosen = max(clean, key=lambda r: (r["worst"], -r["index"]))
+        avoid = [(r["r0"], r["c0"]) for r in rows if r is not chosen]
+        return dict(rule=rule, threshold=threshold, line0=l0, line1=l1, candidates=rows, chosen=chosen["index"],
+                    avoid=avoid, passed_none=not any(not r["low"] for r in rows))
     chosen = next((r for r in rows if not r["low"]), None)
     upto = rows.index(chosen) if chosen else len(rows)
     return dict(rule=rule, threshold=threshold, line0=l0, line1=l1, candidates=rows,

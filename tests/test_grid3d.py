@@ -131,6 +131,12 @@ def test_probe_passes_over_a_translation_on_a_bad_coupler(tmp_path):
     assert all(r["min_floor"] > 0.99 for r in ch["candidates"][1:])
     pr = G.prepare(dev, 4, 2, 2, 3, np.pi / 2, layout="fold", avoid=ch["avoid"])
     assert (pr["where"]["r0"], pr["where"]["c0"]) == (ch["candidates"][1]["r0"], ch["candidates"][1]["c0"])
+    best = G.probe_choose(str(man), str(tmp_path / "probe/runs"), rule="best")
+    clean = [r for r in best["candidates"] if not r["low"]]
+    assert best["chosen"] != 0 and best["chosen"] == max(clean, key=lambda r: (r["worst"], -r["index"]))["index"]
+    pb = G.prepare(dev, 4, 2, 2, 3, np.pi / 2, layout="fold", avoid=best["avoid"])
+    c = best["candidates"][best["chosen"]]
+    assert (pb["where"]["r0"], pb["where"]["c0"]) == (c["r0"], c["c0"])
 
 
 def test_swap_bond_identity_and_merge_saves_cz():
