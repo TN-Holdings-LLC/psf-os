@@ -151,7 +151,13 @@ def assemble(dev, runs, out, max_seconds=60):
             circuits.append(c)
     seconds = qpu_seconds(len(circuits), shots)
     if seconds > max_seconds:
-        raise RuntimeError(f"the job is {seconds:.1f} s by the time model, over {max_seconds} s")
+        import math
+        per = qpu_seconds(1, shots) - 3.0
+        fit = int(max(0, (max_seconds - 3.0) // per)) if per > 0 else 0
+        raise RuntimeError(f"the job is {seconds:.1f} s by the time model, over {max_seconds} s: {len(circuits)} "
+                           f"circuits at {shots} shots ({per:.2f} s each + 3 s per job); {fit} fit in {max_seconds} s. "
+                           f"Use --max-seconds {math.ceil(seconds)} or fewer circuits (run2d: each user circuit adds "
+                           f"three, itself, its floor and its mirror; the ring sentinel adds four)")
     os.makedirs(out)
     with open(os.path.join(out, "circuits.qpy"), "wb") as f:
         qpy.dump(circuits, f)

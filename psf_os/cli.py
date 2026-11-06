@@ -14,8 +14,11 @@
                  [--max-seconds S]                        several files: one job, each with its own floor and mirror
                                                            a 2D circuit on Heron r2 labels: placed by translation,
                                                            floor, mirror and ring sentinel added (psf_os.user2d)
-    psf-os result2d --job JOB_DIR --runs RUNS [--answers ANSWERS.json]
-                                                           the answer card (value +- 2 SE, floor, mirror flags, sentinel)
+    psf-os result2d --job JOB_DIR --runs RUNS [--answers ANSWERS.json] [--extended]
+                                                           the answer card (value +- 2 SE, floor, mirror flags, sentinel);
+                                                           --extended: + report-only flags, retention, notes (report2d)
+    psf-os gatehash --qpy FILE.qpy [...]                   a hash of the gate list (name, qubits, angles to 1e-10) that
+                                                           does not change with Qiskit's QPY format (psf_os.gatehash)
     psf-os repair2d --device DEV_DIR --ledger LEDGER.json --rule a|b --release expiry|early --out LOG.json
                     [--registry REG.json] [--now ISO]      the self-repair chain for the P6 patch (psf_os.repair2d):
                                                            confirmed exclusions, A's and B's copies, the log
@@ -89,6 +92,10 @@ def main(argv=None):
     c2.add_argument("--runs", required=True)
     c2.add_argument("--answers", default=None,
                     help="JSON {label: exact <Z>}; for a batch job {tag: {label: exact <Z>}}")
+    c2.add_argument("--extended", action="store_true",
+                    help="add the report-only blocks of psf_os.report2d (flags, retention, notes); values unchanged")
+    gh = sp.add_parser("gatehash")
+    gh.add_argument("--qpy", nargs="+", required=True, help="QPY files (e.g. JOB_DIR/circuits.qpy, RUNS/*.qpy)")
     rp = sp.add_parser("repair2d")
     rp.add_argument("--device", required=True)
     rp.add_argument("--ledger", required=True)
@@ -164,6 +171,16 @@ def main(argv=None):
         if avoid:
             dev, _ = A.mask(dev, avoid, reason=f"registry at {now.isoformat(sep=' ')}")
         spec = dict(kind="echo_clifford", D=24) if a.dry_clifford_sentinel else None
+        # time model before anything is written (user2d writes its records before the job is assembled, so a refusal
+        # there leaves a half-written --out): each user circuit adds three (itself, floor, mirror), the ring four
+        est = J.qpu_seconds(3 * len(a.circuit) + 4, a.shots)
+        if est > a.max_seconds + 1e-9:
+            per = J.qpu_seconds(1, a.shots) - 3.0
+            print(f"REFUSED: {len(a.circuit)} circuit(s) make {3 * len(a.circuit) + 4} circuits at {a.shots} shots: "
+                  f"{est:.1f} s by the time model, over --max-seconds {a.max_seconds:g} ({per:.2f} s per circuit + 3 s "
+                  f"per job). Use --max-seconds {int(est) + 1}, fewer circuits or fewer shots. Nothing was written.",
+                  file=sys.stderr)
+            return 2
         try:
             if len(a.circuit) == 1:
                 rep = U.build(dev, U.load(a.circuit[0]), a.out, shots=a.shots, sentinel_spec=spec,
@@ -199,10 +216,21 @@ def main(argv=None):
     if a.cmd == "result2d":
         from psf_os import user2d as U
         ans = json.load(open(a.answers)) if a.answers else None
+        if a.extended:
+            from psf_os import report2d as X
+            if len(U.tags_of(a.job, a.runs)) == 1:
+                print(json.dumps(X.extended(a.job, a.runs, ans), indent=1))
+            else:
+                print(json.dumps(X.extended_cards(a.job, a.runs, ans), indent=1))
+            return 0
         if len(U.tags_of(a.job, a.runs)) == 1:
             print(json.dumps(U.card(a.job, a.runs, ans), indent=1))
         else:
             print(json.dumps(U.cards(a.job, a.runs, ans), indent=1))
+        return 0
+    if a.cmd == "gatehash":
+        from psf_os import gatehash as G
+        print(json.dumps({f: G.qpy_hash(f) for f in a.qpy}, indent=1))
         return 0
     return 2
 
