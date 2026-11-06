@@ -96,3 +96,15 @@ def test_run3d_and_the_2d_card_on_a_local_run(tmp_path):
     c = U.card(rep["job"], rep["runs"], json.load(open(tmp_path / "a.json"))["g3d"])
     assert abs(c["floor_mean"] - 1) < 1e-9 and abs(c["mirror_mean"] - 1) < 1e-9
     assert c["answered"]["qubits"] == 8
+
+
+def test_refuses_pairs_that_are_not_couplers():
+    import dataclasses
+    good = _fez_like()
+    qc, placed, used, _ = G.physical(good, 4, 2, 2, 1, 0.8, layout="fold")
+    pairs = {frozenset(qc.find_bit(q).index for q in i.qubits) for i in qc.data if len(i.qubits) == 2}
+    cut = next(iter(pairs))
+    fewer = dataclasses.replace(good, couplers=[c for c in good.couplers if frozenset(c) != cut])
+    moved = G.physical(fewer, 4, 2, 2, 1, 0.8, layout="fold", info=True)
+    assert cut not in {frozenset(moved[0].find_bit(q).index for q in i.qubits) for i in moved[0].data
+                       if len(i.qubits) == 2}

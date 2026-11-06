@@ -380,6 +380,7 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False):
         adj.setdefault(b, set()).add(a)
     bad = set(dev.failed_qubits)
     badc = {frozenset(c) for c in dev.failed_couplers}
+    cpl = {frozenset(c) for c in dev.couplers}
     first = None
 
     def fits(qc):
@@ -387,6 +388,8 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False):
         pairs = {frozenset(qc.find_bit(q).index for q in ins.qubits) for ins in qc.data if len(ins.qubits) == 2}
         if qc.num_qubits > dev.num_qubits:
             return None, "the layout is larger than the device"
+        if pairs - cpl:  # the labels assume the Heron r2 numbering (20 per row); refuse rather than trust it
+            return None, f"the layout uses pairs that are not couplers on {dev.name}: {[sorted(c) for c in pairs - cpl][:4]}"
         if bad & set(used) or badc & pairs:
             return None, (f"the fixed layout touches a failed element on {dev.name}: qubits "
                           f"{sorted(bad & set(used))}, couplers {[sorted(c) for c in badc & pairs]}")
@@ -425,11 +428,9 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False):
         if qc.num_qubits > dev.num_qubits:
             first = first or "the layout is larger than the device"
             continue
-        used = sorted({qc.find_bit(q).index for ins in qc.data for q in ins.qubits})
-        pairs = {frozenset(qc.find_bit(q).index for q in ins.qubits) for ins in qc.data if len(ins.qubits) == 2}
-        if bad & set(used) or badc & pairs:
-            first = first or (f"the fixed layout touches a failed element on {dev.name}: qubits "
-                              f"{sorted(bad & set(used))}, couplers {[sorted(c) for c in badc & pairs]}")
+        used, why = fits(qc)
+        if used is None:
+            first = first or why
             continue
         out = (qc, B.placed(), used, B.passes)
         return out + (dict(layout="rows", r0=r0, c0=c0),) if info else out
