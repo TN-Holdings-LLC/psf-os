@@ -156,3 +156,37 @@ def test_swap_bond_identity_and_merge_saves_cz():
     assert b["cz"] < a["cz"] and b["cz_layers"] < a["cz_layers"] and b["where"]["fold_version"] == "v3.1"
     qc, placed, used, _ = G.physical(dev, 4, 2, 2, 2, 0.8, layout="fold")
     assert G.exact_placed_check(qc, placed, used, 4, 2, 2, 2, 0.8) < 1e-9
+
+
+def test_excited_probe_sees_a_fast_relaxing_qubit(tmp_path):
+    # a qubit that relaxes fast leaves the |0> floor at +1 (as q29 on 11-06) but pulls the |1> floor up: only the
+    # excited probe passes the candidate over
+    import json
+    from qiskit import qpy
+    from qiskit_aer import AerSimulator
+    from qiskit_aer.noise import NoiseModel, amplitude_damping_error
+    dev = _fez_like()
+    rep = G.probe_build(dev, 4, 2, 2, 1, 0.8, str(tmp_path / "p"), k=2, shots=200, excited=True)
+    bad = rep["candidates"][0]["used"][3]
+    assert bad not in rep["candidates"][1]["used"]
+    from psf_os import sim as Sm
+    circs = qpy.load(open(tmp_path / "p/job/circuits.qpy", "rb"))
+    rows = []
+    for k, c in enumerate(circs):
+        cc, act = Sm.compact(c)
+        loc = {q: i for i, q in enumerate(act)}
+        nmk = NoiseModel()
+        if bad in loc:
+            nmk.add_quantum_error(amplitude_damping_error(0.15), ["sx", "x", "rz"], [loc[bad]])
+            for q in act:
+                if q != bad and [min(bad, q), max(bad, q)] in dev.couplers:
+                    e = amplitude_damping_error(0.15).tensor(amplitude_damping_error(0.0))
+                    nmk.add_quantum_error(e, ["cz"], [loc[q], loc[bad]])
+        sim = AerSimulator(method="statevector", noise_model=nmk)
+        rows.append(dict(pub=k, counts=dict(sim.run(cc, shots=200, seed_simulator=3 + k).result().get_counts(0))))
+    man = tmp_path / "p/job"
+    json.dump(dict(job_id="local", submitted="-", local=True, backend=dev.name), open(man / "submission.json", "w"))
+    json.dump(dict(fetched="-", job_id="local", status="DONE", rows=rows), open(man / "raw_counts.json", "w"))
+    ch = G.probe_choose(str(man), str(tmp_path / "p/runs"))
+    c0 = ch["candidates"][0]
+    assert c0["floor"][bad] > 0.95 and c0["floor1"][bad] > -0.8 and ch["chosen"] == 1
