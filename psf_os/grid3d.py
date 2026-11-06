@@ -369,11 +369,13 @@ def offsets(L, M, N):
     return [(r0, c0) for r0 in range(0, 8 - M * N + 1) for c0 in range(0, 16 - L + 1, 4)]
 
 
-def physical(dev, L, M, N, t, theta, layout="auto", info=False):
+def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=()):
     """The placed circuit on device labels (no measurement), the site -> label map, the labels it touches and the
     number of passes (block schedules). layout "auto": the folded layout for L = 4 (`_Fold`), else the row layout
     (`_Builder`); "fold" or "rows" to force one. The first translation in the fixed order that touches no failed
-    qubit or coupler is used (not a search over scores); Refused if none does."""
+    qubit or coupler is used (not a search over scores); Refused if none does. avoid: translations (r0, c0) to pass
+    over (a probe found them below the floor threshold; see `probe_build` / `probe_choose`); () keeps the old path."""
+    avoid = {tuple(a) for a in avoid}
     adj = {}
     for a, b in dev.couplers:
         adj.setdefault(a, set()).add(b)
@@ -397,6 +399,9 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False):
 
     if L == 4 and layout in ("auto", "fold"):
         for swapped, r0, c0 in fold_offsets(M, N):
+            if (r0, c0) in avoid:
+                first = first or "passed over by the probe"
+                continue
             try:
                 B = _Fold(N if swapped else M, M if swapped else N, adj, r0, c0)
             except Refused as e:
@@ -415,6 +420,9 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False):
     if layout == "fold":
         raise Refused("the folded layout needs L = 4")
     for r0, c0 in offsets(L, M, N):
+        if (r0, c0) in avoid:
+            first = first or "passed over by the probe"
+            continue
         try:
             B = _Builder(L, M, N, adj, r0, c0)
         except Refused as e:
@@ -470,13 +478,13 @@ def accept(cu, cf, cm, phys):
     return checks
 
 
-def prepare(dev, L, M, N, t, theta, layout="auto", rc=None):
+def prepare(dev, L, M, N, t, theta, layout="auto", rc=None, avoid=()):
     """Place and compile one circuit with its floor and mirror (nothing written). Returns a dict."""
     from qiskit import QuantumCircuit
     from psf_os import mirror2d as Mi
     from psf_os import user2d as U
     from psf_os.compile import RuleCompiler, rzz_exact
-    qc, placed, used, passes, where = physical(dev, L, M, N, t, theta, layout=layout, info=True)
+    qc, placed, used, passes, where = physical(dev, L, M, N, t, theta, layout=layout, info=True, avoid=avoid)
     n = L * M * N
     phys = [placed[s] for s in range(n)]
     full = QuantumCircuit(dev.num_qubits)
@@ -524,3 +532,68 @@ def build(dev, L, M, N, t, theta, out, shots=4000, max_seconds=60, tag="g3d", la
                mapping={str(s): pr["phys"][s] for s in range(n)}, job=os.path.join(out, "job"), runs=runs)
     json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
     return rep
+
+
+# ---- probe (2026-11-06 night; not declared): our own floor of every touched qubit of the first few translations, read
+# before the main job, so that a translation whose bridge or site sits on a bad element is passed over. No calibration
+# number is read; the choice is the first translation in the fixed order that clears one threshold.
+
+PROBE_THRESHOLD = 0.8
+
+
+def probe_build(dev, L, M, N, t, theta, out, k=4, shots=2000, layout="fold", max_seconds=60):
+    """One job: for each of the first k qualifying translations (fixed order), the floor of the placed circuit at
+    depth t (the CZ skeleton on |0>; ideal <Z> = 1 everywhere) with every touched qubit read, bridges included."""
+    from qiskit import QuantumCircuit
+    from psf_os import job as J
+    from psf_os import user2d as U
+    from psf_os.compile import RuleCompiler, rzz_exact
+    rc = RuleCompiler(dev)
+    runs = os.path.join(out, "runs")
+    os.makedirs(runs)
+    avoid, cands = [], []
+    for i in range(k):
+        try:
+            qc, placed, used, passes, where = physical(dev, L, M, N, t, theta, layout=layout, info=True, avoid=avoid)
+        except Refused:
+            break
+        avoid.append((where["r0"], where["c0"]))
+        full = QuantumCircuit(dev.num_qubits)
+        full.compose(qc, qubits=list(range(qc.num_qubits)), inplace=True)
+        cu = rc.pm.run(U.with_measure(rzz_exact(full), used))
+        cf = U.floor_of(cu)
+        U._record(dev, runs, f"probe_{i}", "floor", "user2d_floor", [cf], [dict(input="f", setting="z")],
+                  extra=dict(tag=f"probe_{i}", probe=dict(where, t=t, index=i)), valid=True, labels=list(used),
+                  mapping={q: q for q in used}, shots=shots)
+        cands.append(dict(index=i, used=used, **where))
+    if not cands:
+        raise Refused(f"no translation qualifies on {dev.name}")
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
+    rep = dict(device=dev.name, L=L, M=M, N=N, t=t, theta=theta, k=len(cands), candidates=cands,
+               threshold=PROBE_THRESHOLD, circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"],
+               job=os.path.join(out, "job"), runs=runs)
+    json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
+    return rep
+
+
+def probe_choose(job_dir, runs, threshold=PROBE_THRESHOLD):
+    """The probe's reading: per candidate its lowest floor and the qubits below `threshold`; `chosen` is the first
+    candidate (fixed order) with none below, and `avoid` the translations before it (to pass to prepare)."""
+    from psf_os import job as J
+    from psf_os.kim import z_values
+    read = J.read(job_dir, runs)
+    rows = []
+    for name in sorted(read, key=lambda n: int(n.split("_")[1]) if n.startswith("probe_") else 1e9):
+        rec, cc = read[name]
+        if not name.startswith("probe_"):
+            continue
+        z, se = z_values(cc[("f", "z")], len(rec["labels"]))
+        floor = {int(q): float(v) for q, v in zip(rec["labels"], z)}
+        low = sorted(q for q, v in floor.items() if v < threshold)
+        pr = rec["probe"]
+        rows.append(dict(index=pr["index"], r0=pr["r0"], c0=pr["c0"], min_floor=min(floor.values()), low=low,
+                         floor=floor))
+    chosen = next((r for r in rows if not r["low"]), None)
+    avoid = [(r["r0"], r["c0"]) for r in rows[: rows.index(chosen)]] if chosen else [(r["r0"], r["c0"]) for r in rows]
+    return dict(threshold=threshold, candidates=rows, chosen=None if chosen is None else chosen["index"],
+                avoid=avoid)

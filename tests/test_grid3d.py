@@ -108,3 +108,26 @@ def test_refuses_pairs_that_are_not_couplers():
     moved = G.physical(fewer, 4, 2, 2, 1, 0.8, layout="fold", info=True)
     assert cut not in {frozenset(moved[0].find_bit(q).index for q in i.qubits) for i in moved[0].data
                        if len(i.qubits) == 2}
+
+
+def test_probe_passes_over_a_translation_on_a_bad_coupler(tmp_path):
+    # the first translation's bridge path carries a strongly depolarizing coupler: its floor falls below the
+    # threshold, the probe chooses the next translation in the fixed order, and prepare(avoid=...) builds that one
+    from psf_os import sim
+    dev = _fez_like()
+    rep = G.probe_build(dev, 4, 2, 2, 3, np.pi / 2, str(tmp_path / "probe"), k=3, shots=1000)
+    c0 = rep["candidates"][0]
+    qc, placed, used, _, where = G.physical(dev, 4, 2, 2, 3, np.pi / 2, layout="fold", info=True)
+    bridge_pairs = sorted({tuple(sorted(qc.find_bit(q).index for q in i.qubits)) for i in qc.data
+                           if i.operation.name == "cx"})
+    rows = sim.run_circuits(__import__("qiskit").qpy.load(open(tmp_path / "probe/job/circuits.qpy", "rb")), 1000,
+                            seed=5, pauli=([bridge_pairs[0]], 0.5, "depol2"))
+    import json
+    man = tmp_path / "probe/job"
+    json.dump(dict(job_id="local-test", submitted="-", local=True, backend=dev.name), open(man / "submission.json", "w"))
+    json.dump(dict(fetched="-", job_id="local-test", status="DONE", rows=rows), open(man / "raw_counts.json", "w"))
+    ch = G.probe_choose(str(man), str(tmp_path / "probe/runs"))
+    assert ch["candidates"][0]["low"] and ch["chosen"] == 1 and ch["avoid"] == [(c0["r0"], c0["c0"])]
+    assert all(r["min_floor"] > 0.99 for r in ch["candidates"][1:])
+    pr = G.prepare(dev, 4, 2, 2, 3, np.pi / 2, layout="fold", avoid=ch["avoid"])
+    assert (pr["where"]["r0"], pr["where"]["c0"]) == (ch["candidates"][1]["r0"], ch["candidates"][1]["c0"])
