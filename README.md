@@ -84,6 +84,7 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 | floor | the user's compiled circuit with every non-diagonal one-qubit gate removed: the same CZs, ideal ⟨Z⟩ = 1 |
 | `psf_os.ibm` | `fetch` (coupling graph and failed elements only), `submit` (the job's own device only, dynamical decoupling and twirling off; nothing is sent if a circuit touches a failed element), `collect` |
 | `psf_os.ledger`, `psf_os.repair2d`, `psf_os.crosstalk2d` | drafts (not declared): reliability ledger, the rule-based self-repair chain, crosstalk test pieces |
+| `psf_os.grid3d` (prototype) | `psf-os run3d`: kicked Ising on an L x M x N cubic lattice placed by fixed rules (lattice rows on heavy-hex rows, bonds through the bridge qubits, an odd-even sort of rows), floor and mirror in the same job, read with `result2d`; correct without noise; costs several times what a search-based router needs (see TOQB `notes/os3d_2026-11-06`) |
 | `psf_os.dual`, `psf_os.kim`, `psf_os.ising2d` | the practice problems P4, P5, P6 as modules, with their exact answers |
 
 ## Layers for rings

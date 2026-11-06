@@ -90,6 +90,15 @@ def main(argv=None):
     r2.add_argument("--shots", type=int, default=4000)
     r2.add_argument("--dry-clifford-sentinel", action="store_true",
                     help="local dry runs only: the ring sentinel at the echo's Clifford point, so Aer can run the job")
+    g3 = sp.add_parser("run3d", help="prototype: kicked Ising on an L x M x N cubic lattice, fixed-rule placement")
+    g3.add_argument("--device", required=True)
+    for k in ("L", "M", "N", "t"):
+        g3.add_argument(f"--{k}", type=int, required=True)
+    g3.add_argument("--theta", type=float, required=True)
+    g3.add_argument("--out", required=True)
+    g3.add_argument("--shots", type=int, default=4000)
+    g3.add_argument("--max-seconds", type=float, default=60)
+    g3.add_argument("--answers-out", default=None, help="write the exact answers {g3d: {site: <Z>}} (<= 24 sites)")
     c2 = sp.add_parser("result2d")
     c2.add_argument("--job", required=True)
     c2.add_argument("--runs", required=True)
@@ -171,6 +180,19 @@ def main(argv=None):
         v = sentinel.verdict(a.job, a.runs)
         print(json.dumps(dict(user=J.score(a.job, a.runs), sentinel=dict(
             status=v["status"], runs={k: c["dead"] + c["weak"] for k, c in v["cells"].items()})), indent=1))
+        return 0
+    if a.cmd == "run3d":
+        from psf_os import grid3d as G
+        dev = Dv.Device.load(a.device)
+        try:
+            rep = G.build(dev, a.L, a.M, a.N, a.t, a.theta, a.out, shots=a.shots, max_seconds=a.max_seconds)
+        except G.Refused as e:
+            print(f"REFUSED: {e}", file=sys.stderr)
+            return 2
+        if a.answers_out:
+            json.dump({"g3d": G.exact(a.L, a.M, a.N, a.t, a.theta)}, open(a.answers_out, "w"))
+        print(json.dumps({k: rep[k] for k in ("device", "sites", "qubits_used", "cz", "passes", "circuits",
+                                              "qpu_seconds_model", "job", "runs")}, indent=1))
         return 0
     if a.cmd == "run2d":
         from psf_os import allocate as A
