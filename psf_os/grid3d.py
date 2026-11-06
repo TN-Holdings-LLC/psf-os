@@ -455,10 +455,24 @@ def mirror_of_compiled(rc, cu, phys):
     return pm0.run(out)
 
 
-def build(dev, L, M, N, t, theta, out, shots=4000, max_seconds=60, tag="g3d", layout="auto"):
-    """Place, compile, add floor and mirror, assemble one job. Returns a report dict."""
+def accept(cu, cf, cm, phys):
+    """The 2D acceptance checks (as user2d.build_batch): user and mirror measure `phys` in order, the floor keeps
+    every CZ and is diagonal, the mirror has twice the CZs. Returns the checks; Refused if one fails."""
+    from psf_os import mirror2d as Mi
+    from psf_os.compile import measured_qubits
+    want = {k: p for k, p in enumerate(phys)}
+    cz = Mi.cz_count(cu)
+    checks = dict(user_measures=measured_qubits(cu) == want, floor_cz=Mi.cz_count(cf) == cz,
+                  floor_diagonal=all(i.operation.name in ("cz", "rz", "barrier", "measure", "delay") for i in cf.data),
+                  mirror_cz=Mi.cz_count(cm) == 2 * cz, mirror_measures=measured_qubits(cm) == want)
+    if not all(checks.values()):
+        raise Refused(f"acceptance failed: {checks}")
+    return checks
+
+
+def prepare(dev, L, M, N, t, theta, layout="auto", rc=None):
+    """Place and compile one circuit with its floor and mirror (nothing written). Returns a dict."""
     from qiskit import QuantumCircuit
-    from psf_os import job as J
     from psf_os import mirror2d as Mi
     from psf_os import user2d as U
     from psf_os.compile import RuleCompiler, rzz_exact
@@ -468,30 +482,45 @@ def build(dev, L, M, N, t, theta, out, shots=4000, max_seconds=60, tag="g3d", la
     full = QuantumCircuit(dev.num_qubits)
     full.compose(qc, qubits=list(range(qc.num_qubits)), inplace=True)
     full = rzz_exact(full)  # RZZ(+-pi/2): one CZ, not two (as user2d)
-    rc = RuleCompiler(dev)
+    rc = rc or RuleCompiler(dev)
     cu = rc.pm.run(U.with_measure(full, phys))
     cf = U.floor_of(cu)
     cm = mirror_of_compiled(rc, cu, phys)
-    cz = Mi.cz_count(cu)
-    if Mi.cz_count(cf) != cz or Mi.cz_count(cm) != 2 * cz:
-        raise Refused("acceptance failed: floor or mirror CZ count")
+    checks = accept(cu, cf, cm, phys)
+    return dict(cu=cu, cf=cf, cm=cm, cz=Mi.cz_count(cu), cz_layers=cu.depth(lambda i: len(i.qubits) == 2),
+                phys=phys, used=used, passes=passes, where=where, checks=checks,
+                grid3d=dict(L=L, M=M, N=N, t=t, theta=theta, passes=passes, **where))
+
+
+def write_records(dev, runs, tag, prep, shots, L, M, N, extra=None):
+    """The user, floor and mirror records of one prepared circuit (names p2d_<tag>, _floor, _mirror)."""
+    from psf_os import user2d as U
+    n = L * M * N
+    labels = list(range(n))
+    mapping = {s: prep["phys"][s] for s in labels}
+    common = dict(labels=labels, mapping=mapping, shots=shots)
+    ex = dict(tag=tag, edges=[list(e) for e in lattice_edges(L, M, N)], **(extra or {}))
+    cz = prep["cz"]
+    U._record(dev, runs, f"p2d_{tag}", "user", "user2d", [prep["cu"]], [dict(input="u", setting="z")],
+              extra=dict(ex, cz=cz), valid=True, **common)
+    U._record(dev, runs, f"p2d_{tag}_floor", "floor", "user2d_floor", [prep["cf"]], [dict(input="f", setting="z")],
+              extra=dict(ex, cz=cz), valid=True, **common)
+    U._record(dev, runs, f"p2d_{tag}_mirror", "mirror", "user2d_mirror", [prep["cm"]], [dict(input="m", setting="z")],
+              extra=dict(ex, cz=2 * cz), valid=True, **common)
+
+
+def build(dev, L, M, N, t, theta, out, shots=4000, max_seconds=60, tag="g3d", layout="auto"):
+    """Place, compile, add floor and mirror, assemble one job. Returns a report dict."""
+    from psf_os import job as J
+    pr = prepare(dev, L, M, N, t, theta, layout=layout)
+    n = L * M * N
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
-    labels = list(range(n))
-    mapping = {s: placed[s] for s in labels}
-    edges = [list(e) for e in lattice_edges(L, M, N)]
-    common = dict(labels=labels, mapping=mapping, shots=shots)
-    extra = dict(tag=tag, edges=edges, grid3d=dict(L=L, M=M, N=N, t=t, theta=theta, passes=passes, **where))
-    U._record(dev, runs, f"p2d_{tag}", "user", "user2d", [cu], [dict(input="u", setting="z")],
-              extra=dict(extra, cz=cz), valid=True, **common)
-    U._record(dev, runs, f"p2d_{tag}_floor", "floor", "user2d_floor", [cf], [dict(input="f", setting="z")],
-              extra=dict(extra, cz=cz), valid=True, **common)
-    U._record(dev, runs, f"p2d_{tag}_mirror", "mirror", "user2d_mirror", [cm], [dict(input="m", setting="z")],
-              extra=dict(extra, cz=2 * cz), valid=True, **common)
+    write_records(dev, runs, tag, pr, shots, L, M, N, extra=dict(grid3d=pr["grid3d"]))
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
-    rep = dict(device=dev.name, L=L, M=M, N=N, t=t, theta=theta, sites=n, qubits_used=len(used), cz=cz,
-               cz_layers=cu.depth(lambda i: len(i.qubits) == 2), passes=passes, **where, circuits=len(man["pubs"]),
+    rep = dict(device=dev.name, L=L, M=M, N=N, t=t, theta=theta, sites=n, qubits_used=len(pr["used"]), cz=pr["cz"],
+               cz_layers=pr["cz_layers"], passes=pr["passes"], **pr["where"], circuits=len(man["pubs"]),
                qpu_seconds_model=man["qpu_seconds_model"],
-               mapping={str(s): placed[s] for s in labels}, job=os.path.join(out, "job"), runs=runs)
+               mapping={str(s): pr["phys"][s] for s in range(n)}, job=os.path.join(out, "job"), runs=runs)
     json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
     return rep
