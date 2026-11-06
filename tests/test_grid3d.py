@@ -131,3 +131,28 @@ def test_probe_passes_over_a_translation_on_a_bad_coupler(tmp_path):
     assert all(r["min_floor"] > 0.99 for r in ch["candidates"][1:])
     pr = G.prepare(dev, 4, 2, 2, 3, np.pi / 2, layout="fold", avoid=ch["avoid"])
     assert (pr["where"]["r0"], pr["where"]["c0"]) == (ch["candidates"][1]["r0"], ch["candidates"][1]["c0"])
+
+
+def test_swap_bond_identity_and_merge_saves_cz():
+    # the fixed identity: Z Z, H(b), CX(b, a), CX(a, b), H(a), S S equals SWAP . RZZ(-pi/2) up to a global phase
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Operator
+    t = QuantumCircuit(2)
+    t.rzz(-np.pi / 2, 0, 1)
+    t.swap(0, 1)
+    q = QuantumCircuit(2)
+    q.z(0)
+    q.z(1)
+    q.h(1)
+    q.cx(1, 0)
+    q.cx(0, 1)
+    q.h(0)
+    q.s(0)
+    q.s(1)
+    assert Operator(q).equiv(Operator(t))
+    dev = _fez_like()
+    a = G.prepare(dev, 4, 2, 2, 2, 0.8, layout="fold", merge=False)
+    b = G.prepare(dev, 4, 2, 2, 2, 0.8, layout="fold")
+    assert b["cz"] < a["cz"] and b["cz_layers"] < a["cz_layers"] and b["where"]["fold_version"] == "v3.1"
+    qc, placed, used, _ = G.physical(dev, 4, 2, 2, 2, 0.8, layout="fold")
+    assert G.exact_placed_check(qc, placed, used, 4, 2, 2, 2, 0.8) < 1e-9

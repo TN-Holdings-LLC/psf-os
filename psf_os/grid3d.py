@@ -235,8 +235,9 @@ class _Fold:
     native inside the block. One fixed block schedule per step brings every x to the needed positions; no exchange
     passes, no rows moved apart."""
 
-    def __init__(self, M, N, adj, r0, c0):
+    def __init__(self, M, N, adj, r0, c0, merge=True):
         from qiskit import QuantumCircuit
+        self.merge = merge
         if M > 8 or N > 4:
             raise Refused("the folded layout takes M <= 8 rows and N <= 4 blocks")
         if r0 + M > 8 or c0 + 4 * N > 16:
@@ -266,11 +267,24 @@ class _Fold:
     def lab(self, y, z, pos):
         return 20 * (self.r0 + y) + self.c0 + 4 * z + (pos if z % 2 == 0 else 3 - pos)
 
-    def _bonds(self, todo):
+    def _swap_bond(self, a, b):
+        """SWAP . RZZ(-pi/2) on (a, b) with 2 CX (one fixed Clifford identity, checked in the tests): Z on both,
+        H(b), CX(b, a), CX(a, b), H(a), S on both. Instead of 3 CX for the swap and 1 CZ for the bond."""
+        q = self.qc
+        q.z(a)
+        q.z(b)
+        q.h(b)
+        q.cx(b, a)
+        q.cx(a, b)
+        q.h(a)
+        q.s(a)
+        q.s(b)
+
+    def _bonds(self, todo, with_x=True):
         M, N = self.M, self.N
         for y in range(M):
             for z in range(N):
-                for i in range(3):
+                for i in range(3 if with_x else 0):
                     x, w = self.col[i], self.col[i + 1]
                     key = ("x", y, z, min(x, w))
                     if abs(x - w) == 1 and key in todo:
@@ -297,13 +311,21 @@ class _Fold:
         todo = ({("x", y, z, x) for y in range(M) for z in range(N) for x in range(3)}
                 | {("z", y, z, x) for y in range(M) for z in range(N - 1) for x in range(4)}
                 | {("y", y, z, x) for y in range(M - 1) for z in range(N) for x in range(4)})
-        self._bonds(todo)
-        if todo:
+        moving = any(k[0] != "x" for k in todo)
+        self._bonds(todo, with_x=not (self.merge and moving))
+        if moving:
             for rnd in self.schedule():
                 for z in range(N):
                     for i in rnd:
+                        x, w = self.col[i], self.col[i + 1]
                         for y in range(M):
-                            self.qc.swap(self.lab(y, z, i), self.lab(y, z, i + 1))
+                            a, b = self.lab(y, z, i), self.lab(y, z, i + 1)
+                            key = ("x", y, z, min(x, w))
+                            if self.merge and abs(x - w) == 1 and key in todo:
+                                self._swap_bond(a, b)  # the x-bond rides on the swap of its two columns
+                                todo.discard(key)
+                            else:
+                                self.qc.swap(a, b)
                 for i in rnd:
                     self.col[i], self.col[i + 1] = self.col[i + 1], self.col[i]
                 self._bonds(todo)
@@ -369,7 +391,7 @@ def offsets(L, M, N):
     return [(r0, c0) for r0 in range(0, 8 - M * N + 1) for c0 in range(0, 16 - L + 1, 4)]
 
 
-def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=()):
+def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=(), merge=True):
     """The placed circuit on device labels (no measurement), the site -> label map, the labels it touches and the
     number of passes (block schedules). layout "auto": the folded layout for L = 4 (`_Fold`), else the row layout
     (`_Builder`); "fold" or "rows" to force one. The first translation in the fixed order that touches no failed
@@ -403,7 +425,7 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=()):
                 first = first or "passed over by the probe"
                 continue
             try:
-                B = _Fold(N if swapped else M, M if swapped else N, adj, r0, c0)
+                B = _Fold(N if swapped else M, M if swapped else N, adj, r0, c0, merge=merge)
             except Refused as e:
                 first = first or str(e)
                 continue
@@ -414,7 +436,8 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=()):
                 first = first or why
                 continue
             out = (B.qc, B.placed(swapped), used, B.passes)
-            return out + (dict(layout="fold" + ("-swapped" if swapped else ""), r0=r0, c0=c0),) if info else out
+            return out + (dict(layout="fold" + ("-swapped" if swapped else ""), r0=r0, c0=c0,
+                               fold_version="v3.1" if merge else "v3"),) if info else out
         if layout == "fold":
             raise Refused(f"no translation of the folded layout fits on {dev.name}; first reason: {first}")
     if layout == "fold":
@@ -478,13 +501,14 @@ def accept(cu, cf, cm, phys):
     return checks
 
 
-def prepare(dev, L, M, N, t, theta, layout="auto", rc=None, avoid=()):
+def prepare(dev, L, M, N, t, theta, layout="auto", rc=None, avoid=(), merge=True):
     """Place and compile one circuit with its floor and mirror (nothing written). Returns a dict."""
     from qiskit import QuantumCircuit
     from psf_os import mirror2d as Mi
     from psf_os import user2d as U
     from psf_os.compile import RuleCompiler, rzz_exact
-    qc, placed, used, passes, where = physical(dev, L, M, N, t, theta, layout=layout, info=True, avoid=avoid)
+    qc, placed, used, passes, where = physical(dev, L, M, N, t, theta, layout=layout, info=True, avoid=avoid,
+                                               merge=merge)
     n = L * M * N
     phys = [placed[s] for s in range(n)]
     full = QuantumCircuit(dev.num_qubits)
