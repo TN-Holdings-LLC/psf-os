@@ -99,6 +99,8 @@ def main(argv=None):
     g3.add_argument("--shots", type=int, default=4000)
     g3.add_argument("--max-seconds", type=float, default=60)
     g3.add_argument("--answers-out", default=None, help="write the exact answers {g3d: {site: <Z>}} (<= 24 sites)")
+    g3.add_argument("--layout", choices=("auto", "fold", "rows"), default="auto",
+                    help="auto: fold for L = 4, rows otherwise")
     c2 = sp.add_parser("result2d")
     c2.add_argument("--job", required=True)
     c2.add_argument("--runs", required=True)
@@ -185,14 +187,15 @@ def main(argv=None):
         from psf_os import grid3d as G
         dev = Dv.Device.load(a.device)
         try:
-            rep = G.build(dev, a.L, a.M, a.N, a.t, a.theta, a.out, shots=a.shots, max_seconds=a.max_seconds)
+            rep = G.build(dev, a.L, a.M, a.N, a.t, a.theta, a.out, shots=a.shots, max_seconds=a.max_seconds,
+                          layout=a.layout)
         except G.Refused as e:
             print(f"REFUSED: {e}", file=sys.stderr)
             return 2
         if a.answers_out:
             json.dump({"g3d": G.exact(a.L, a.M, a.N, a.t, a.theta)}, open(a.answers_out, "w"))
-        print(json.dumps({k: rep[k] for k in ("device", "sites", "qubits_used", "cz", "passes", "circuits",
-                                              "qpu_seconds_model", "job", "runs")}, indent=1))
+        print(json.dumps({k: rep[k] for k in ("device", "layout", "r0", "c0", "sites", "qubits_used", "cz",
+                                              "cz_layers", "passes", "circuits", "qpu_seconds_model", "job", "runs")}, indent=1))
         return 0
     if a.cmd == "run2d":
         from psf_os import allocate as A

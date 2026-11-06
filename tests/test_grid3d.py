@@ -15,30 +15,70 @@ def _fez_like():
 
 
 def test_placed_circuit_equals_the_lattice_without_noise():
-    from qiskit import QuantumCircuit
-    from qiskit.quantum_info import Statevector
     dev = _fez_like()
-    for (L, M, N) in ((4, 2, 1), (4, 1, 2), (4, 2, 2)):
-        qc, placed, used, passes = G.physical(dev, L, M, N, 2, 0.8)
-        m = {u: i for i, u in enumerate(used)}
+    for layout, sizes in (("fold", ((4, 2, 1), (4, 1, 2), (4, 2, 2), (4, 1, 3))), ("rows", ((4, 2, 1), (4, 2, 2)))):
+        for (L, M, N) in sizes:
+            qc, placed, used, passes = G.physical(dev, L, M, N, 2, 0.8, layout=layout)
+            worst = G.exact_placed_check(qc, placed, used, L, M, N, 2, 0.8)
+            assert worst < 1e-9, (layout, L, M, N, worst)
+
+
+def _clifford(qc):
+    from psf_os.compile import rzz_exact
+    q = rzz_exact(qc)
+    out = q.copy_empty_like()
+    for ins in q.data:
+        if ins.operation.name == "rz":
+            k = int(round(float(ins.operation.params[0]) / (np.pi / 2))) % 4
+            for _ in range(k):
+                out.s(ins.qubits[0])
+        elif ins.operation.name == "rx":
+            out.sx(ins.qubits[0])
+        else:
+            out.append(ins.operation, ins.qubits)
+    return out
+
+
+def test_placed_state_equals_the_lattice_state_clifford():
+    # theta = pi/2: every stabilizer of the lattice state holds on the placed sites and every other touched qubit is
+    # back in |0> (bridges), at sizes beyond a statevector
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Pauli, StabilizerState
+    dev = _fez_like()
+    for layout, (L, M, N) in (("fold", (4, 3, 2)), ("fold", (4, 2, 3)), ("rows", (8, 2, 2))):
+        qc, placed, used, _ = G.physical(dev, L, M, N, 2, np.pi / 2, layout=layout)
+        n, m = L * M * N, {u: i for i, u in enumerate(used)}
         small = QuantumCircuit(len(used))
         for ins in qc.data:
             small.append(ins.operation, [m[qc.find_bit(q).index] for q in ins.qubits])
-        p = Statevector(small).probabilities()
-        idx = np.arange(len(p))
-        ex = G.exact(L, M, N, 2, 0.8)
-        worst = max(abs(float(np.sum(p * (1 - 2 * ((idx >> m[placed[s]]) & 1)))) - ex[str(s)]) for s in placed)
-        assert worst < 1e-9, (L, M, N, worst)
+        ps = StabilizerState(_clifford(small))
+        for lab in StabilizerState(_clifford(G.logical(L, M, N, 2, np.pi / 2))).clifford.to_labels(mode="S"):
+            sign, body = lab[0], lab[1:]
+            chars = ["I"] * len(used)
+            for s in range(n):
+                chars[m[placed[s]]] = body[n - 1 - s]
+            assert abs(ps.expectation_value(Pauli("".join(reversed(chars)))) - (1 if sign == "+" else -1)) < 1e-9
+        data = {m[placed[s]] for s in range(n)}
+        for q in set(range(len(used))) - data:
+            z = ["I"] * len(used)
+            z[q] = "Z"
+            assert abs(ps.expectation_value(Pauli("".join(reversed(z)))) - 1) < 1e-9
 
 
-def test_refuses_a_failed_element_and_bad_sizes():
+def test_relocates_around_a_failed_element_and_refuses_bad_sizes():
     import dataclasses
     good = _fez_like()
     with pytest.raises(G.Refused, match="L must be"):
         G.physical(good, 5, 2, 1, 1, 0.8)
-    bad = dataclasses.replace(good, failed_qubits=[21])
-    with pytest.raises(G.Refused, match="failed element"):
-        G.physical(bad, 4, 2, 1, 1, 0.8)
+    with pytest.raises(G.Refused, match="needs L = 4"):
+        G.physical(good, 8, 2, 1, 1, 0.8, layout="fold")
+    first = G.physical(good, 4, 2, 2, 1, 0.8, info=True)
+    hit = first[2][0]
+    moved = G.physical(dataclasses.replace(good, failed_qubits=[hit]), 4, 2, 2, 1, 0.8, info=True)
+    assert hit not in moved[2] and (moved[4]["r0"], moved[4]["c0"]) != (first[4]["r0"], first[4]["c0"])
+    every_row = [20 * r + c for r in range(8) for c in range(0, 16, 4)]  # column 0 of every block of every row
+    with pytest.raises(G.Refused, match="no translation"):
+        G.physical(dataclasses.replace(good, failed_qubits=every_row), 4, 2, 2, 1, 0.8)
 
 
 def test_run3d_and_the_2d_card_on_a_local_run(tmp_path):
