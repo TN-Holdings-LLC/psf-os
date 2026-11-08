@@ -236,8 +236,14 @@ class _Fold:
     passes, no rows moved apart."""
 
     def __init__(self, M, N, adj, r0, c0, merge=True):
+        """merge: True (v3.1) an x-bond rides on the swap of its columns when that swap comes before any boundary
+        where the columns are adjacent; "carry" (v3.2, 2026-11-08) an x-bond also waits at a boundary when a later
+        round of the same step swaps its columns, so it rides on that swap. The 6-swap schedules are reduced words of
+        the reversal of the four columns (every pair swapped once per step): with "carry" all three x-bonds of a row
+        ride on swaps. False (v3): no merging."""
         from qiskit import QuantumCircuit
-        self.merge = merge
+        self.merge = bool(merge)
+        self.carry = merge == "carry"
         if M > 8 or N > 4:
             raise Refused("the folded layout takes M <= 8 rows and N <= 4 blocks")
         if r0 + M > 8 or c0 + 4 * N > 16:
@@ -280,14 +286,23 @@ class _Fold:
         q.s(a)
         q.s(b)
 
-    def _bonds(self, todo, with_x=True):
+    def _later(self, rounds):
+        """Column pairs (min, max) that the given rounds swap, starting from the present arrangement."""
+        c, out = list(self.col), set()
+        for rnd in rounds:
+            for i in rnd:
+                out.add((min(c[i], c[i + 1]), max(c[i], c[i + 1])))
+                c[i], c[i + 1] = c[i + 1], c[i]
+        return out
+
+    def _bonds(self, todo, with_x=True, later=frozenset()):
         M, N = self.M, self.N
         for y in range(M):
             for z in range(N):
                 for i in range(3 if with_x else 0):
                     x, w = self.col[i], self.col[i + 1]
                     key = ("x", y, z, min(x, w))
-                    if abs(x - w) == 1 and key in todo:
+                    if abs(x - w) == 1 and key in todo and (min(x, w), max(x, w)) not in later:
                         self.qc.rzz(-np.pi / 2, self.lab(y, z, i), self.lab(y, z, i + 1))
                         todo.discard(key)
                 if z + 1 < N:
@@ -314,7 +329,8 @@ class _Fold:
         moving = any(k[0] != "x" for k in todo)
         self._bonds(todo, with_x=not (self.merge and moving))
         if moving:
-            for rnd in self.schedule():
+            sched = list(self.schedule())
+            for r, rnd in enumerate(sched):
                 for z in range(N):
                     for i in rnd:
                         x, w = self.col[i], self.col[i + 1]
@@ -328,7 +344,7 @@ class _Fold:
                                 self.qc.swap(a, b)
                 for i in rnd:
                     self.col[i], self.col[i + 1] = self.col[i + 1], self.col[i]
-                self._bonds(todo)
+                self._bonds(todo, later=self._later(sched[r + 1:]) if self.carry else frozenset())
             self.passes += 1
         if todo:
             raise RuntimeError(f"bonds left over: {sorted(todo)[:4]}")
@@ -437,7 +453,7 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=(), merge=
                 continue
             out = (B.qc, B.placed(swapped), used, B.passes)
             return out + (dict(layout="fold" + ("-swapped" if swapped else ""), r0=r0, c0=c0,
-                               fold_version="v3.1" if merge else "v3"),) if info else out
+                               fold_version="v3.2" if merge == "carry" else "v3.1" if merge else "v3"),) if info else out
         if layout == "fold":
             raise Refused(f"no translation of the folded layout fits on {dev.name}; first reason: {first}")
     if layout == "fold":

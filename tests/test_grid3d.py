@@ -219,3 +219,30 @@ def test_x_echo_sees_a_phase_error_the_floors_cannot(tmp_path):
     assert c0["min_floor"] > 0.99 and c0["max_floor1"] < -0.99      # the floors do not see it
     assert c0["min_echo_x"] < 0.8 and set(c0["low"]) & set(pair)    # the X echo does
     assert ch["chosen"] == 1
+
+
+def test_carry_rides_every_x_bond_on_its_swap():
+    # v3.2 (merge="carry"): exact without noise, fewer CZ than v3.1, and at theta = pi/2 the placed state carries
+    # every stabilizer of the lattice state at a size beyond a statevector
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Pauli, StabilizerState
+    dev = _fez_like()
+    for (L, M, N) in ((4, 2, 1), (4, 2, 2), (4, 1, 3)):
+        qc, placed, used, _ = G.physical(dev, L, M, N, 2, 0.8, layout="fold", merge="carry")
+        assert G.exact_placed_check(qc, placed, used, L, M, N, 2, 0.8) < 1e-9, (L, M, N)
+    a = G.prepare(dev, 4, 2, 2, 2, 0.8, layout="fold")
+    b = G.prepare(dev, 4, 2, 2, 2, 0.8, layout="fold", merge="carry")
+    assert b["cz"] < a["cz"] and b["where"]["fold_version"] == "v3.2"
+    L, M, N = 4, 3, 2
+    qc, placed, used, _ = G.physical(dev, L, M, N, 2, np.pi / 2, layout="fold", merge="carry")
+    n, m = L * M * N, {u: i for i, u in enumerate(used)}
+    small = QuantumCircuit(len(used))
+    for ins in qc.data:
+        small.append(ins.operation, [m[qc.find_bit(q).index] for q in ins.qubits])
+    ps = StabilizerState(_clifford(small))
+    for lab in StabilizerState(_clifford(G.logical(L, M, N, 2, np.pi / 2))).clifford.to_labels(mode="S"):
+        sign, body = lab[0], lab[1:]
+        chars = ["I"] * len(used)
+        for s in range(n):
+            chars[m[placed[s]]] = body[n - 1 - s]
+        assert abs(ps.expectation_value(Pauli("".join(reversed(chars)))) - (1 if sign == "+" else -1)) < 1e-9
