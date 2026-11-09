@@ -99,7 +99,7 @@ def main(argv=None):
     g3.add_argument("--shots", type=int, default=4000)
     g3.add_argument("--max-seconds", type=float, default=60)
     g3.add_argument("--answers-out", default=None, help="write the exact answers {g3d: {site: <Z>}} (<= 24 sites)")
-    g3.add_argument("--layout", choices=("auto", "fold", "rows"), default="auto",
+    g3.add_argument("--layout", choices=("auto", "fold", "rows", "line"), default="auto",
                     help="auto: fold for L = 4, rows otherwise")
     c2 = sp.add_parser("result2d")
     c2.add_argument("--job", required=True)

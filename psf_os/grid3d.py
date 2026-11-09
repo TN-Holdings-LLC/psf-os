@@ -407,12 +407,17 @@ def offsets(L, M, N):
     return [(r0, c0) for r0 in range(0, 8 - M * N + 1) for c0 in range(0, 16 - L + 1, 4)]
 
 
-def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=(), merge=True):
+def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=(), merge=True, at=None):
     """The placed circuit on device labels (no measurement), the site -> label map, the labels it touches and the
     number of passes (block schedules). layout "auto": the folded layout for L = 4 (`_Fold`), else the row layout
     (`_Builder`); "fold" or "rows" to force one. The first translation in the fixed order that touches no failed
     qubit or coupler is used (not a search over scores); Refused if none does. avoid: translations (r0, c0) to pass
-    over (a probe found them below the floor threshold; see `probe_build` / `probe_choose`); () keeps the old path."""
+    over (a probe found them below the floor threshold; see `probe_build` / `probe_choose`); () keeps the old path.
+    at: None, or translations (r0, c0) to restrict the fixed order to (fold and line; for comparing layouts on the same
+    qubits, e.g. the line forced to the fold's place). layout "line": psf_os.grid3d_line (4 x 2 x 2, 4 x 3 x 2)."""
+    if layout == "line":  # the line layout (grid3d_line; 4 x 2 x 2 and 4 x 3 x 2 only; never chosen by "auto")
+        from psf_os import grid3d_line
+        return grid3d_line.physical(dev, L, M, N, t, theta, info=info, avoid=avoid, offsets=at)
     avoid = {tuple(a) for a in avoid}
     adj = {}
     for a, b in dev.couplers:
@@ -437,6 +442,8 @@ def physical(dev, L, M, N, t, theta, layout="auto", info=False, avoid=(), merge=
 
     if L == 4 and layout in ("auto", "fold"):
         for swapped, r0, c0 in fold_offsets(M, N):
+            if at is not None and (r0, c0) not in {tuple(v) for v in at}:
+                continue
             if (r0, c0) in avoid:
                 first = first or "passed over by the probe"
                 continue
@@ -517,14 +524,14 @@ def accept(cu, cf, cm, phys):
     return checks
 
 
-def prepare(dev, L, M, N, t, theta, layout="auto", rc=None, avoid=(), merge=True):
+def prepare(dev, L, M, N, t, theta, layout="auto", rc=None, avoid=(), merge=True, at=None):
     """Place and compile one circuit with its floor and mirror (nothing written). Returns a dict."""
     from qiskit import QuantumCircuit
     from psf_os import mirror2d as Mi
     from psf_os import user2d as U
     from psf_os.compile import RuleCompiler, rzz_exact
     qc, placed, used, passes, where = physical(dev, L, M, N, t, theta, layout=layout, info=True, avoid=avoid,
-                                               merge=merge)
+                                               merge=merge, at=at)
     n = L * M * N
     phys = [placed[s] for s in range(n)]
     full = QuantumCircuit(dev.num_qubits)
@@ -651,7 +658,7 @@ def probe_build(dev, L, M, N, t, theta, out, k=4, shots=2000, layout="fold", max
                           echo_x=excited)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
     rep = dict(device=dev.name, L=L, M=M, N=N, t=t, theta=theta, k=len(cands),
-               candidates=[{x: c[x] for x in ("index", "used", "r0", "c0")} | dict(layout="fold") for c in cands],
+               candidates=[{x: c[x] for x in ("index", "used", "r0", "c0")} | dict(layout=layout) for c in cands],
                threshold=PROBE_THRESHOLD, circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"],
                job=os.path.join(out, "job"), runs=runs)
     json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
