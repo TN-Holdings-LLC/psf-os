@@ -1,0 +1,16 @@
+{
+ "card": 1,
+ "name": "a card the entrance refuses (for docs/card.md)",
+ "lattice": {"kind": "grid3d", "size": [4, 4, 2]},
+ "hamiltonian": {"terms": [
+  {"pauli": "ZZ", "on": "edges", "coef": 0.5, "group": "zz"},
+  {"pauli": "X", "on": "sites", "coef": 0.3, "group": "x"},
+  {"pauli": "ZZ", "sites": [0, 3], "coef": 0.5, "group": "zz"},
+  {"pauli": "Z", "sites": [1], "coef": "0.2+0.1j", "group": "x"},
+  {"pauli": "X", "sites": [0], "coef": 0.1, "group": "zz"}
+ ]},
+ "initial": {"bits": "0101"},
+ "time": {"dt": 0.1, "steps": 2, "order": ["zz", "x", "y"]},
+ "measure": [{"op": "Z", "sites": "all"}],
+ "conserved": [{"name": "total X", "terms": [{"pauli": "X", "on": "sites", "coef": 1}]}]
+}

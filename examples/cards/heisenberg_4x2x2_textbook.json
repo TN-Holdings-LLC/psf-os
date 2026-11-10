@@ -1,0 +1,791 @@
+{
+ "card": 1,
+ "name": "Heisenberg XXX 4x2x2, dt 0.05, t 1, Neel, textbook order",
+ "lattice": {
+  "kind": "grid3d",
+  "size": [
+   4,
+   2,
+   2
+  ]
+ },
+ "hamiltonian": {
+  "terms": [
+   {
+    "pauli": "XX",
+    "sites": [
+     0,
+     4
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     0,
+     4
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     4
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     1,
+     5
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     1,
+     5
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     1,
+     5
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     2,
+     6
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     2,
+     6
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     2,
+     6
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     3,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     3,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     3,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     8,
+     12
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     8,
+     12
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     8,
+     12
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     9,
+     13
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     9,
+     13
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     9,
+     13
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     10,
+     14
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     10,
+     14
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     10,
+     14
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     11,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     11,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     11,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax0p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     0,
+     2
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     0,
+     2
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     2
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     1,
+     3
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     1,
+     3
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     1,
+     3
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     4,
+     6
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     4,
+     6
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     4,
+     6
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     5,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     5,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     5,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     8,
+     10
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     8,
+     10
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     8,
+     10
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     9,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     9,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     9,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     12,
+     14
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     12,
+     14
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     12,
+     14
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     13,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     13,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     13,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax1p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     6,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     6,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     6,
+     7
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     8,
+     9
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     8,
+     9
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     8,
+     9
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     10,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     10,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     10,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     12,
+     13
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     12,
+     13
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     12,
+     13
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     14,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     14,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     14,
+     15
+    ],
+    "coef": 1.0,
+    "group": "ax2p0"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     4,
+     8
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     4,
+     8
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     4,
+     8
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     5,
+     9
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     5,
+     9
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     5,
+     9
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     6,
+     10
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     6,
+     10
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     6,
+     10
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     7,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     7,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     7,
+     11
+    ],
+    "coef": 1.0,
+    "group": "ax0p1"
+   }
+  ]
+ },
+ "initial": {
+  "bits": "0110100101101001"
+ },
+ "time": {
+  "dt": 0.05,
+  "steps": 1,
+  "order": [
+   "ax0p0",
+   "ax0p1",
+   "ax1p0",
+   "ax2p0"
+  ]
+ },
+ "measure": [
+  {
+   "op": "Z",
+   "sites": "all"
+  }
+ ]
+}

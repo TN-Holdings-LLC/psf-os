@@ -1,0 +1,335 @@
+{
+ "card": 1,
+ "name": "Schwinger N 6, M1, dt 0.25, 2 step(s)",
+ "lattice": {
+  "kind": "graph",
+  "sites": 6,
+  "edges": [
+   [
+    0,
+    1
+   ],
+   [
+    0,
+    2
+   ],
+   [
+    0,
+    3
+   ],
+   [
+    0,
+    4
+   ],
+   [
+    0,
+    5
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    1,
+    3
+   ],
+   [
+    1,
+    4
+   ],
+   [
+    1,
+    5
+   ],
+   [
+    2,
+    3
+   ],
+   [
+    2,
+    4
+   ],
+   [
+    2,
+    5
+   ],
+   [
+    3,
+    4
+   ],
+   [
+    3,
+    5
+   ],
+   [
+    4,
+    5
+   ]
+  ]
+ },
+ "hamiltonian": {
+  "terms": [
+   {
+    "pauli": "Z",
+    "sites": [
+     0
+    ],
+    "coef": -1.75,
+    "group": "z"
+   },
+   {
+    "pauli": "Z",
+    "sites": [
+     1
+    ],
+    "coef": -0.75,
+    "group": "z"
+   },
+   {
+    "pauli": "Z",
+    "sites": [
+     2
+    ],
+    "coef": -1.25,
+    "group": "z"
+   },
+   {
+    "pauli": "Z",
+    "sites": [
+     3
+    ],
+    "coef": -0.25,
+    "group": "z"
+   },
+   {
+    "pauli": "Z",
+    "sites": [
+     4
+    ],
+    "coef": -0.75,
+    "group": "z"
+   },
+   {
+    "pauli": "Z",
+    "sites": [
+     5
+    ],
+    "coef": 0.25,
+    "group": "z"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 2.0,
+    "group": "layer1"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 0.5,
+    "group": "layer1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 0.5,
+    "group": "layer1"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 1.0,
+    "group": "layer1"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 0.5,
+    "group": "layer1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 0.5,
+    "group": "layer1"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 0.5,
+    "group": "layer1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 0.5,
+    "group": "layer1"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     3
+    ],
+    "coef": 1.0,
+    "group": "layer2"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     1,
+     3
+    ],
+    "coef": 1.0,
+    "group": "layer3"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     2,
+     4
+    ],
+    "coef": 0.5,
+    "group": "layer3"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     4
+    ],
+    "coef": 0.5,
+    "group": "layer4"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     1,
+     4
+    ],
+    "coef": 0.5,
+    "group": "layer5"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     2
+    ],
+    "coef": 1.5,
+    "group": "layer5"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     3,
+     4
+    ],
+    "coef": 0.5,
+    "group": "layer6"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     3,
+     4
+    ],
+    "coef": 0.5,
+    "group": "layer6"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     3,
+     4
+    ],
+    "coef": 0.5,
+    "group": "layer6"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     1,
+     2
+    ],
+    "coef": 1.5,
+    "group": "layer6"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     1,
+     2
+    ],
+    "coef": 0.5,
+    "group": "layer6"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     1,
+     2
+    ],
+    "coef": 0.5,
+    "group": "layer6"
+   }
+  ]
+ },
+ "initial": {
+  "bits": "010101"
+ },
+ "time": {
+  "dt": 0.25,
+  "steps": 2,
+  "orders": [
+   [
+    "z",
+    "layer1",
+    "layer2",
+    "layer3",
+    "layer4",
+    "layer5",
+    "layer6"
+   ],
+   [
+    "z",
+    "layer6",
+    "layer5",
+    "layer4",
+    "layer3",
+    "layer2",
+    "layer1"
+   ]
+  ]
+ },
+ "measure": [
+  {
+   "op": "Z",
+   "sites": "all"
+  }
+ ]
+}

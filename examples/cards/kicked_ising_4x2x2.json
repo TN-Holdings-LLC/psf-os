@@ -1,0 +1,45 @@
+{
+ "card": 1,
+ "name": "kicked Ising 4x2x2, theta 0.6, t 1",
+ "lattice": {
+  "kind": "grid3d",
+  "size": [
+   4,
+   2,
+   2
+  ]
+ },
+ "hamiltonian": {
+  "terms": [
+   {
+    "pauli": "ZZ",
+    "on": "edges",
+    "coef": -0.7853981633974483,
+    "group": "zz"
+   },
+   {
+    "pauli": "X",
+    "on": "sites",
+    "coef": 0.3,
+    "group": "x"
+   }
+  ]
+ },
+ "initial": {
+  "bits": "0000000000000000"
+ },
+ "time": {
+  "dt": 1.0,
+  "steps": 1,
+  "order": [
+   "zz",
+   "x"
+  ]
+ },
+ "measure": [
+  {
+   "op": "Z",
+   "sites": "all"
+  }
+ ]
+}

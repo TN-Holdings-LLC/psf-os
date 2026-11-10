@@ -1,0 +1,15 @@
+{
+ "card": 1,
+ "name": "a declared charge that H does not keep (for docs/card.md)",
+ "lattice": {"kind": "chain", "size": [6]},
+ "hamiltonian": {"terms": [
+  {"pauli": "XX", "on": "edges", "coef": 1.0, "group": "xx"},
+  {"pauli": "YY", "on": "edges", "coef": 1.0, "group": "yy"},
+  {"pauli": "Z", "on": "sites", "coef": 0.4, "group": "z"}
+ ]},
+ "initial": {"product": "0"},
+ "time": {"dt": 0.1, "steps": 3, "order": ["z", "xx", "yy"]},
+ "measure": [{"op": "Z", "sites": "all"}],
+ "conserved": [{"name": "total Z", "terms": [{"pauli": "Z", "on": "sites", "coef": 1}]},
+               {"name": "total X", "terms": [{"pauli": "X", "on": "sites", "coef": 1}]}]
+}

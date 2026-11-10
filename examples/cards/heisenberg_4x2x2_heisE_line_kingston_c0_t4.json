@@ -1,0 +1,907 @@
+{
+ "card": 1,
+ "name": "heisE line candidate 0 (r0 1, c0 0) t 4 on ibm_kingston",
+ "lattice": {
+  "kind": "grid3d",
+  "size": [
+   4,
+   2,
+   2
+  ]
+ },
+ "hamiltonian": {
+  "terms": [
+   {
+    "pauli": "XX",
+    "sites": [
+     4,
+     6
+    ],
+    "coef": 1.0,
+    "group": "b4_6"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     4,
+     6
+    ],
+    "coef": 1.0,
+    "group": "b4_6"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     4,
+     6
+    ],
+    "coef": 1.0,
+    "group": "b4_6"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     12,
+     14
+    ],
+    "coef": 1.0,
+    "group": "b12_14"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     12,
+     14
+    ],
+    "coef": 1.0,
+    "group": "b12_14"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     12,
+     14
+    ],
+    "coef": 1.0,
+    "group": "b12_14"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     8,
+     12
+    ],
+    "coef": 1.0,
+    "group": "b8_12"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     8,
+     12
+    ],
+    "coef": 1.0,
+    "group": "b8_12"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     8,
+     12
+    ],
+    "coef": 1.0,
+    "group": "b8_12"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     10,
+     14
+    ],
+    "coef": 1.0,
+    "group": "b10_14"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     10,
+     14
+    ],
+    "coef": 1.0,
+    "group": "b10_14"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     10,
+     14
+    ],
+    "coef": 1.0,
+    "group": "b10_14"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     8,
+     10
+    ],
+    "coef": 1.0,
+    "group": "b8_10"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     8,
+     10
+    ],
+    "coef": 1.0,
+    "group": "b8_10"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     8,
+     10
+    ],
+    "coef": 1.0,
+    "group": "b8_10"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     12,
+     13
+    ],
+    "coef": 1.0,
+    "group": "b12_13"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     12,
+     13
+    ],
+    "coef": 1.0,
+    "group": "b12_13"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     12,
+     13
+    ],
+    "coef": 1.0,
+    "group": "b12_13"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     14,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b14_15"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     14,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b14_15"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     14,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b14_15"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     5,
+     9
+    ],
+    "coef": 1.0,
+    "group": "b5_9"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     5,
+     9
+    ],
+    "coef": 1.0,
+    "group": "b5_9"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     5,
+     9
+    ],
+    "coef": 1.0,
+    "group": "b5_9"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     7,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b7_11"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     7,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b7_11"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     7,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b7_11"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     8,
+     9
+    ],
+    "coef": 1.0,
+    "group": "b8_9"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     8,
+     9
+    ],
+    "coef": 1.0,
+    "group": "b8_9"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     8,
+     9
+    ],
+    "coef": 1.0,
+    "group": "b8_9"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     10,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b10_11"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     10,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b10_11"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     10,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b10_11"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     9,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b9_11"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     9,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b9_11"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     9,
+     11
+    ],
+    "coef": 1.0,
+    "group": "b9_11"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     9,
+     13
+    ],
+    "coef": 1.0,
+    "group": "b9_13"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     9,
+     13
+    ],
+    "coef": 1.0,
+    "group": "b9_13"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     9,
+     13
+    ],
+    "coef": 1.0,
+    "group": "b9_13"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     11,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b11_15"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     11,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b11_15"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     11,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b11_15"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     13,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b13_15"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     13,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b13_15"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     13,
+     15
+    ],
+    "coef": 1.0,
+    "group": "b13_15"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     0,
+     4
+    ],
+    "coef": 1.0,
+    "group": "b0_4"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     0,
+     4
+    ],
+    "coef": 1.0,
+    "group": "b0_4"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     4
+    ],
+    "coef": 1.0,
+    "group": "b0_4"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     2,
+     6
+    ],
+    "coef": 1.0,
+    "group": "b2_6"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     2,
+     6
+    ],
+    "coef": 1.0,
+    "group": "b2_6"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     2,
+     6
+    ],
+    "coef": 1.0,
+    "group": "b2_6"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     0,
+     2
+    ],
+    "coef": 1.0,
+    "group": "b0_2"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     0,
+     2
+    ],
+    "coef": 1.0,
+    "group": "b0_2"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     2
+    ],
+    "coef": 1.0,
+    "group": "b0_2"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 1.0,
+    "group": "b4_5"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 1.0,
+    "group": "b4_5"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     4,
+     5
+    ],
+    "coef": 1.0,
+    "group": "b4_5"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     6,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b6_7"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     6,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b6_7"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     6,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b6_7"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     4,
+     8
+    ],
+    "coef": 1.0,
+    "group": "b4_8"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     4,
+     8
+    ],
+    "coef": 1.0,
+    "group": "b4_8"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     4,
+     8
+    ],
+    "coef": 1.0,
+    "group": "b4_8"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     6,
+     10
+    ],
+    "coef": 1.0,
+    "group": "b6_10"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     6,
+     10
+    ],
+    "coef": 1.0,
+    "group": "b6_10"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     6,
+     10
+    ],
+    "coef": 1.0,
+    "group": "b6_10"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 1.0,
+    "group": "b0_1"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 1.0,
+    "group": "b0_1"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     0,
+     1
+    ],
+    "coef": 1.0,
+    "group": "b0_1"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 1.0,
+    "group": "b2_3"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 1.0,
+    "group": "b2_3"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     2,
+     3
+    ],
+    "coef": 1.0,
+    "group": "b2_3"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     1,
+     3
+    ],
+    "coef": 1.0,
+    "group": "b1_3"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     1,
+     3
+    ],
+    "coef": 1.0,
+    "group": "b1_3"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     1,
+     3
+    ],
+    "coef": 1.0,
+    "group": "b1_3"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     1,
+     5
+    ],
+    "coef": 1.0,
+    "group": "b1_5"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     1,
+     5
+    ],
+    "coef": 1.0,
+    "group": "b1_5"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     1,
+     5
+    ],
+    "coef": 1.0,
+    "group": "b1_5"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     3,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b3_7"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     3,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b3_7"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     3,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b3_7"
+   },
+   {
+    "pauli": "XX",
+    "sites": [
+     5,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b5_7"
+   },
+   {
+    "pauli": "YY",
+    "sites": [
+     5,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b5_7"
+   },
+   {
+    "pauli": "ZZ",
+    "sites": [
+     5,
+     7
+    ],
+    "coef": 1.0,
+    "group": "b5_7"
+   }
+  ]
+ },
+ "initial": {
+  "bits": "0110100101101001"
+ },
+ "time": {
+  "dt": 0.05,
+  "steps": 4,
+  "orders": [
+   [
+    "b4_6",
+    "b12_14",
+    "b8_12",
+    "b10_14",
+    "b8_10",
+    "b12_13",
+    "b14_15",
+    "b5_9",
+    "b7_11",
+    "b8_9",
+    "b10_11",
+    "b9_11",
+    "b9_13",
+    "b11_15",
+    "b13_15",
+    "b0_4",
+    "b2_6",
+    "b0_2",
+    "b4_5",
+    "b6_7",
+    "b4_8",
+    "b6_10",
+    "b0_1",
+    "b2_3",
+    "b1_3",
+    "b1_5",
+    "b3_7",
+    "b5_7"
+   ],
+   [
+    "b5_7",
+    "b13_15",
+    "b1_5",
+    "b3_7",
+    "b1_3",
+    "b0_1",
+    "b2_3",
+    "b0_2",
+    "b4_8",
+    "b6_10",
+    "b4_5",
+    "b6_7",
+    "b0_4",
+    "b2_6",
+    "b4_6",
+    "b9_13",
+    "b11_15",
+    "b9_11",
+    "b8_9",
+    "b10_11",
+    "b8_10",
+    "b5_9",
+    "b7_11",
+    "b12_13",
+    "b14_15",
+    "b8_12",
+    "b10_14",
+    "b12_14"
+   ],
+   [
+    "b4_6",
+    "b12_14",
+    "b8_12",
+    "b10_14",
+    "b8_10",
+    "b12_13",
+    "b14_15",
+    "b5_9",
+    "b7_11",
+    "b8_9",
+    "b10_11",
+    "b9_11",
+    "b9_13",
+    "b11_15",
+    "b13_15",
+    "b0_4",
+    "b2_6",
+    "b0_2",
+    "b4_5",
+    "b6_7",
+    "b4_8",
+    "b6_10",
+    "b0_1",
+    "b2_3",
+    "b1_3",
+    "b1_5",
+    "b3_7",
+    "b5_7"
+   ],
+   [
+    "b5_7",
+    "b13_15",
+    "b1_5",
+    "b3_7",
+    "b1_3",
+    "b0_1",
+    "b2_3",
+    "b0_2",
+    "b4_8",
+    "b6_10",
+    "b4_5",
+    "b6_7",
+    "b0_4",
+    "b2_6",
+    "b4_6",
+    "b9_13",
+    "b11_15",
+    "b9_11",
+    "b8_9",
+    "b10_11",
+    "b8_10",
+    "b5_9",
+    "b7_11",
+    "b12_13",
+    "b14_15",
+    "b8_12",
+    "b10_14",
+    "b12_14"
+   ]
+  ]
+ },
+ "measure": [
+  {
+   "op": "Z",
+   "sites": "all"
+  }
+ ]
+}
