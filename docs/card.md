@@ -161,6 +161,26 @@ Each term is turned into gates by a fixed decomposition. Nothing is searched.
 Qubit i is site i. The circuit has no measurement. `measured_circuits` adds the basis turns and measures site i into
 clbit i.
 
+### Option: one gate per pair (`merge=True`, added 2026-11-10)
+
+`C.circuit(card, merge=True)`, `C.exact(card, merge=True)`, `C.measured_circuits(card, merge=True)` and
+`python -m psf_os.card exact CARD.json --merge` take this option. The default is still term by term.
+
+- **What is merged.** Inside a group, the two-site terms on the same pair of sites become one two-qubit unitary,
+  exp(−i·dt·Σ c·P). For example, XX, YY and ZZ on one bond.
+- **How it is built.** The unitary is decomposed analytically by the KAK (Weyl) decomposition, using qiskit's
+  `TwoQubitBasisDecomposer` with the CZ basis and `approximate=False`. That gives at most 3 CZ, and nothing is
+  searched.
+- **Where it goes.** The gate stands where the pair's first term stood. The group's terms commute, so this is exact.
+- **What is not merged.** One-site terms and pairs with a single term keep the fixed decomposition.
+
+Measured on the acceptance cards:
+- **Heisenberg 4×2×2:** 6 → 3 CZ per bond.
+- **Schwinger N 6:** 40 → 26 CZ per step.
+- **Kicked Ising:** unchanged (28).
+
+The merged answers equal the term-by-term ones to 1.7e−13 or better.
+
 ## Exact answers
 
 `C.exact` returns the exact expectation value of every observable of the card's own Trotter circuit, not of

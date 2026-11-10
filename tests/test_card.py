@@ -166,3 +166,22 @@ def test_cli(tmp_path, capsys):
     p.write_text(json.dumps(bad))
     assert C.main(["check", str(p)]) == 2
     assert "REFUSED" in capsys.readouterr().out
+
+
+def test_merge_equals_term_by_term_and_dense():
+    card = _chain_card()
+    card["hamiltonian"]["terms"] = [  # one group per edge parity, XX + YY + ZZ on each pair (made-up values)
+        {"pauli": p, "sites": [a, a + 1], "coef": c, "group": f"e{a % 2}"}
+        for a in range(3) for p, c in (("XX", 0.41), ("YY", -0.23), ("ZZ", 0.67))] + [
+        {"pauli": "Z", "on": "sites", "coef": 0.19, "group": "f"}]
+    card["time"]["order"] = ["f", "e0", "e1"]
+    a, b, ref = C.exact(card), C.exact(card, merge=True), _reference(card)
+    assert max(abs(a[k] - b[k]) for k in a) < 1e-10 and max(abs(b[k] - ref[k]) for k in b) < 1e-10
+    plain, merged = C.circuit(card), C.circuit(card, merge=True)
+    assert plain.count_ops()["cz"] == 3 * 3 * 2 * 3         # 3 steps x 3 pairs x 3 terms x 2 CZ
+    assert merged.count_ops()["cz"] <= 3 * 3 * 3              # at most 3 CZ per pair and step
+
+
+def test_merge_keeps_single_terms():
+    card = _chain_card()
+    assert C.circuit(card, merge=True).count_ops() == C.circuit(card).count_ops()

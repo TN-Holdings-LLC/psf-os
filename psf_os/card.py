@@ -413,17 +413,67 @@ def prepare(qc, P):
             qc.sdg(i)
 
 
-def circuit(card, steps=None):
+_KAK = None
+
+
+def pair_gate(qc, terms, dt):
+    """exp(-i dt sum c P) for commuting terms on one pair of sites, as one two-qubit unitary decomposed analytically
+    by the KAK (Weyl) decomposition into at most 3 CZ (qiskit TwoQubitBasisDecomposer, CZ basis, exact; nothing
+    searched)."""
+    global _KAK
+    from qiskit.circuit.library import CZGate
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit.synthesis import TwoQubitBasisDecomposer
+    from scipy.linalg import expm
+    if _KAK is None:
+        _KAK = TwoQubitBasisDecomposer(CZGate(), euler_basis="ZSX")
+    lo, hi = sorted(terms[0]["sites"])
+    loc = {lo: 0, hi: 1}
+    h = SparsePauliOp.from_sparse_list([(t["pauli"], [loc[v] for v in t["sites"]], t["coef"]) for t in terms],
+                                       num_qubits=2).to_matrix()
+    sub = _KAK(expm(-1j * dt * h), approximate=False)
+    qc.compose(sub, qubits=[lo, hi], inplace=True)
+
+
+def _group_gates(qc, terms, dt, merge):
+    """The gates of one group: term by term, or (merge) the two-site terms on one pair as one gate, placed where the
+    pair's first term stands (the group's terms commute, so the rearrangement is exact); a pair with one term and the
+    one-site terms keep the fixed decomposition."""
+    if not merge:
+        for t in terms:
+            term_gate(qc, t, dt)
+        return
+    pairs = {}
+    for t in terms:
+        if len(t["sites"]) == 2:
+            pairs.setdefault(frozenset(t["sites"]), []).append(t)
+    done = set()
+    for t in terms:
+        if len(t["sites"]) == 1:
+            term_gate(qc, t, dt)
+            continue
+        key = frozenset(t["sites"])
+        if key in done:
+            continue
+        done.add(key)
+        if len(pairs[key]) == 1:
+            term_gate(qc, t, dt)
+        else:
+            pair_gate(qc, pairs[key], dt)
+
+
+def circuit(card, steps=None, merge=False):
     """The logical first-order Trotter circuit (no measurement): the initial state, then per step the groups in the
-    step's order (step s uses orders[s mod len(orders)]), each term of a group once, in the card's order."""
+    step's order (step s uses orders[s mod len(orders)]), each term of a group once, in the card's order.
+    merge (option, 2026-11-10): commuting terms of a group on the same pair of sites become one two-qubit gate
+    (`pair_gate`, at most 3 CZ); the default keeps the term-by-term decomposition."""
     from qiskit import QuantumCircuit
     P = card if "groups" in card and "orders" in card else parse(card)
     qc = QuantumCircuit(P["n"])
     prepare(qc, P)
     for s in range(P["steps"] if steps is None else steps):
         for g in P["orders"][s % len(P["orders"])]:
-            for t in P["groups"][g]:
-                term_gate(qc, t, P["dt"])
+            _group_gates(qc, P["groups"][g], P["dt"], merge)
     return qc
 
 
@@ -447,11 +497,11 @@ def settings(P):
     return ["".join(b) for b in out]
 
 
-def measured_circuits(card):
+def measured_circuits(card, merge=False):
     """[(basis, circuit)]: the Trotter circuit, every read site turned to its basis, measured into clbit = site."""
     from qiskit import ClassicalRegister
     P = card if "groups" in card and "orders" in card else parse(card)
-    base = circuit(P)
+    base = circuit(P, merge=merge)
     out = []
     for b in settings(P):
         qc = base.copy()
@@ -474,7 +524,7 @@ def label(p, s):
 # exact answers
 # ---------------------------------------------------------------------------------------------------------------
 
-def exact(card, method="auto"):
+def exact(card, method="auto", merge=False):
     """{label: exact expectation value} of the card's Trotter circuit, one per observable. method "statevector"
     (qiskit.quantum_info, up to about 20 sites), "aer" (qiskit-aer save_expectation_value, up to 28), "auto"."""
     from qiskit.quantum_info import SparsePauliOp
@@ -482,7 +532,7 @@ def exact(card, method="auto"):
     n = P["n"]
     if n > MAX_EXACT_SITES:
         raise CardRefused([f"size: {n} sites; exact answers only up to {MAX_EXACT_SITES}"])
-    qc = circuit(P)
+    qc = circuit(P, merge=merge)
     ops = [(label(p, s), SparsePauliOp.from_sparse_list([(p, list(s), 1.0)], num_qubits=n)) for p, s in P["measure"]]
     if method == "auto":
         method = "statevector" if n <= 20 else "aer"
@@ -512,13 +562,14 @@ def main(argv=None):
     e = sub.add_parser("exact", help="exact expectation values of the card's Trotter circuit")
     e.add_argument("card")
     e.add_argument("--out", default=None, help="write the answers here (never overwritten)")
+    e.add_argument("--merge", action="store_true", help="commuting terms on one pair as one gate (at most 3 CZ)")
     a = ap.parse_args(argv)
     try:
         card = load(a.card)
         if a.cmd == "check":
             print(json.dumps(check(card), indent=1))
             return 0
-        ans = exact(card)
+        ans = exact(card, merge=a.merge)
     except CardRefused as err:
         print("REFUSED")
         for r in err.reasons:
