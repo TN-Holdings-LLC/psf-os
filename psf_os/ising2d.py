@@ -118,15 +118,19 @@ def cone(q, t, edges=None, layers=None):
     return sorted(b), [[e for e in L if e[0] in b and e[1] in b] for L in layers]
 
 
-def answer_cone(q, t, max_qubits=26, edges=None, layers=None, tx=THETA_X):
-    """<Z_q> from q's cone by Aer statevector (CPU)."""
+def answer_cone(q, t, max_qubits=26, edges=None, layers=None, tx=THETA_X, beyond=None):
+    """<Z_q> from q's cone by Aer statevector (CPU). beyond="tn" (2026-11-11): a cone over max_qubits goes to
+    psf_os.exact_tn (light-cone tensor network, memory guard) instead of returning (None, size)."""
     from qiskit.quantum_info import Pauli
     from qiskit_aer import AerSimulator
     cq, cl = cone(q, t, edges, layers)
-    if len(cq) > max_qubits:
+    if len(cq) > max_qubits and beyond != "tn":
         return None, len(cq)
     idx = {p: k for k, p in enumerate(cq)}
     qc = circuit(t, mapping=idx, width=len(cq), measure=False, qubits=cq, layers=cl, tx=tx)
+    if len(cq) > max_qubits:
+        from psf_os import exact_tn
+        return exact_tn.expectation(qc, {idx[q]: "Z"})[0], len(cq)
     qc.save_expectation_value(Pauli("Z"), [idx[q]], label="z")
     return float(AerSimulator(method="statevector").run(qc).result().data(0)["z"]), len(cq)
 

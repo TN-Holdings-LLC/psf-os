@@ -22,6 +22,7 @@ TOQB notes/os3d_sim_2026-11-06 for comparison.
     from psf_os import grid3d
     rep = grid3d.build(dev, L=4, M=2, N=2, t=2, theta=0.8, out="RUN")     # job folder RUN/job, runs RUN/runs
     grid3d.exact(4, 2, 2, 2, 0.8)                                         # exact <Z> per site (n <= 24)
+    grid3d.exact(4, 6, 3, 4, 0.8, beyond="tn")                            # over 24 sites: light-cone tensor network
     psf-os run3d --device DEV --L 4 --M 2 --N 2 --t 2 --theta 0.8 --out RUN
     psf-os result2d --job RUN/job --runs RUN/runs [--answers A.json]     # the same answer card as 2D
 """
@@ -65,10 +66,14 @@ def logical(L, M, N, t, theta):
     return qc
 
 
-def exact(L, M, N, t, theta):
-    """Exact <Z> per site by statevector (n <= 24), as {str(site index): value}."""
+def exact(L, M, N, t, theta, beyond=None):
+    """Exact <Z> per site by statevector (n <= 24), as {str(site index): value}. beyond="tn" (2026-11-11): over 24
+    sites by psf_os.exact_tn (each site's light cone as a tensor network; exact_tn.TooLarge past the memory guard)."""
     from qiskit.quantum_info import Statevector
     n = L * M * N
+    if n > 24 and beyond == "tn":
+        from psf_os import exact_tn
+        return {str(q): v for q, v in enumerate(exact_tn.z_sites(logical(L, M, N, t, theta), range(n)))}
     if n > 24:
         raise ValueError("exact answers here only up to 24 sites")
     p = Statevector(logical(L, M, N, t, theta)).probabilities()

@@ -1,0 +1,1 @@
+{"form": "gates", "cone_qubits": 99, "cone_gates": 824, "tensors": 1863, "tensors_simplified": 563, "search_s": 131.53, "slices": 1, "max_intermediate": 65536, "log2_max_intermediate": 16.0, "peak": 132244, "log2_peak": 17.01, "log10_cost": 6.84, "contract_s": 0.04, "imag": 3.868230063520939e-17, "method": "tn", "diff": 3.2612801348363973e-16, "seconds": 131.7}

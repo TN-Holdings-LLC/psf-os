@@ -26,8 +26,9 @@ term lies on an edge of the lattice. Qubit i of the logical circuit is site i.
     rep = C.check(card)          # CardRefused(reasons) before anything runs
     qc = C.circuit(card)         # logical Trotter circuit, no measurement
     ans = C.exact(card)          # {"Z_0": ..., "Z_0 Z_1": ...}, exact expectation values of that circuit
-    python -m psf_os.card check CARD.json            # the entrance; exit 2 with every reason when refused
-    python -m psf_os.card exact CARD.json [--out ANS.json]
+    ans = C.exact(card, method="tn")   # light-cone tensor network (psf_os.exact_tn), no site limit, memory guard
+    python -m psf_os.card check CARD.json [--tn]     # the entrance; exit 2 with every reason when refused
+    python -m psf_os.card exact CARD.json [--out ANS.json] [--method auto|statevector|aer|tn]
 """
 from __future__ import annotations
 
@@ -40,7 +41,7 @@ import sys
 import numpy as np
 
 CARD_VERSION = 1
-MAX_EXACT_SITES = 28          # exact answers by statevector up to this many sites
+MAX_EXACT_SITES = 28          # exact answers by statevector up to this many sites (method "tn": the memory guard)
 COMMUTE_ATOL = 1e-10          # a commutator counts as zero below this (largest Pauli coefficient)
 PAULI = "XYZ"
 PRODUCT = {"0": "|0>", "1": "|1>", "+": "|+>", "-": "|->", "r": "|+i>", "l": "|-i>"}
@@ -524,18 +525,35 @@ def label(p, s):
 # exact answers
 # ---------------------------------------------------------------------------------------------------------------
 
-def exact(card, method="auto", merge=False):
+def exact(card, method="auto", merge=False, info=None, **tn_options):
     """{label: exact expectation value} of the card's Trotter circuit, one per observable. method "statevector"
-    (qiskit.quantum_info, up to about 20 sites), "aer" (qiskit-aer save_expectation_value, up to 28), "auto"."""
+    (qiskit.quantum_info, up to about 20 sites), "aer" (qiskit-aer save_expectation_value, up to MAX_EXACT_SITES),
+    "tn" (2026-11-11: psf_os.exact_tn, each observable's light cone as a tensor network; no site limit, refused by
+    the memory guard instead: largest intermediate over tn_options["max_size"], default 2^27 elements), "auto"
+    (statevector up to 20 sites, "tn" above). info: a list that receives exact_tn's report per observable."""
     from qiskit.quantum_info import SparsePauliOp
-    P = card if "groups" in card and "orders" in card else parse(card)
+    if method not in ("auto", "statevector", "aer", "tn"):
+        raise ValueError(f"method {method!r}")
+    if "groups" in card and "orders" in card:
+        P = card
+    else:
+        P = parse(card, exact=method in ("statevector", "aer"))
     n = P["n"]
-    if n > MAX_EXACT_SITES:
-        raise CardRefused([f"size: {n} sites; exact answers only up to {MAX_EXACT_SITES}"])
-    qc = circuit(P, merge=merge)
-    ops = [(label(p, s), SparsePauliOp.from_sparse_list([(p, list(s), 1.0)], num_qubits=n)) for p, s in P["measure"]]
     if method == "auto":
-        method = "statevector" if n <= 20 else "aer"
+        method = "statevector" if n <= 20 else "tn"
+    if method in ("statevector", "aer") and n > MAX_EXACT_SITES:
+        raise CardRefused([f"size: {n} sites; exact answers by {method} only up to {MAX_EXACT_SITES}"])
+    qc = circuit(P, merge=merge)
+    if method == "tn":
+        from psf_os import exact_tn
+        try:
+            vals, reps = exact_tn.expectations(qc, [(p, tuple(s)) for p, s in P["measure"]], info=True, **tn_options)
+        except exact_tn.TooLarge as err:
+            raise CardRefused([f"memory guard (tn): {err.reason}"])
+        if info is not None:
+            info.extend(reps)
+        return {label(p, s): v for (p, s), v in zip(P["measure"], vals)}
+    ops = [(label(p, s), SparsePauliOp.from_sparse_list([(p, list(s), 1.0)], num_qubits=n)) for p, s in P["measure"]]
     if method == "statevector":
         from qiskit.quantum_info import Statevector
         sv = Statevector(qc)
@@ -559,17 +577,20 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="the entrance checks; exit 2 and the reasons when refused")
     c.add_argument("card")
+    c.add_argument("--tn", action="store_true", help="no site limit (answers by the tensor network, method tn)")
     e = sub.add_parser("exact", help="exact expectation values of the card's Trotter circuit")
     e.add_argument("card")
     e.add_argument("--out", default=None, help="write the answers here (never overwritten)")
     e.add_argument("--merge", action="store_true", help="commuting terms on one pair as one gate (at most 3 CZ)")
+    e.add_argument("--method", default="auto", choices=["auto", "statevector", "aer", "tn"],
+                   help="auto: statevector up to 20 sites, tn above")
     a = ap.parse_args(argv)
     try:
         card = load(a.card)
         if a.cmd == "check":
-            print(json.dumps(check(card), indent=1))
+            print(json.dumps(check(card, exact=not a.tn), indent=1))
             return 0
-        ans = exact(card, merge=a.merge)
+        ans = exact(card, method=a.method, merge=a.merge)
     except CardRefused as err:
         print("REFUSED")
         for r in err.reasons:

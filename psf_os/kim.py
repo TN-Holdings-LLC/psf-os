@@ -121,13 +121,14 @@ def cone(qubits, edges, q, t):
     return b, [e for e in edges if e[0] in s and e[1] in s]
 
 
-def answer_cone(qubits, edges, q, theta, t, max_qubits=26):
-    """<Z_q> from q's causal cone by statevector (relabelled to 0..m-1)."""
+def answer_cone(qubits, edges, q, theta, t, max_qubits=26, beyond=None):
+    """<Z_q> from q's causal cone by statevector (relabelled to 0..m-1). beyond="tn" (2026-11-11): a cone over
+    max_qubits goes to psf_os.exact_tn (light-cone tensor network, memory guard) instead of being refused."""
     from qiskit import QuantumCircuit
     from qiskit.quantum_info import Pauli
     from qiskit_aer import AerSimulator
     cq, ce = cone(qubits, edges, q, t)
-    if len(cq) > max_qubits:
+    if len(cq) > max_qubits and beyond != "tn":
         raise ValueError(f"the cone of {q} at t = {t} has {len(cq)} qubits, over {max_qubits}")
     idx = {p: k for k, p in enumerate(cq)}
     qc = QuantumCircuit(len(cq))
@@ -136,13 +137,17 @@ def answer_cone(qubits, edges, q, theta, t, max_qubits=26):
             qc.cz(idx[op[1]], idx[op[2]])
         else:
             getattr(qc, op[0])(op[1], idx[op[2]])
+    if len(cq) > max_qubits:
+        from psf_os import exact_tn
+        return exact_tn.expectation(qc, {idx[q]: "Z"})[0], len(cq)
     qc.save_expectation_value(Pauli("Z"), [idx[q]], label="z")
     sim = AerSimulator(method="statevector", precision="double")
     return float(sim.run(qc).result().data(0)["z"]), len(cq)
 
 
-def answers(qubits, edges, theta, t, max_qubits=26):
-    """{"z": [<Z_q> for q in qubits], "method": ..., "cone_max": ...}."""
+def answers(qubits, edges, theta, t, max_qubits=26, beyond=None):
+    """{"z": [<Z_q> for q in qubits], "method": ..., "cone_max": ...}. beyond="tn": cones over max_qubits by
+    psf_os.exact_tn (method then reads "cone statevector / tn")."""
     if abs(theta) < 1e-12 or t == 0:
         return dict(z=[1.0] * len(qubits), method="trivial", cone_max=0)
     if abs(abs(theta) - np.pi / 2) < 1e-12:
@@ -153,10 +158,10 @@ def answers(qubits, edges, theta, t, max_qubits=26):
                     method="stabilizer", cone_max=0)
     z, m = [], 0
     for q in qubits:
-        v, k = answer_cone(qubits, edges, q, theta, t, max_qubits)
+        v, k = answer_cone(qubits, edges, q, theta, t, max_qubits, beyond)
         z.append(v)
         m = max(m, k)
-    return dict(z=z, method="cone statevector", cone_max=m)
+    return dict(z=z, method="cone statevector" if m <= max_qubits else "cone statevector / tn", cone_max=m)
 
 
 def cell_name(theta, tag=""):

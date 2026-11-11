@@ -13,6 +13,7 @@ dependencies = ["numpy", "qiskit>=2.0"]
 [project.optional-dependencies]
 sim = ["qiskit-aer", "qiskit-ibm-runtime"]
 test = ["pytest"]
+tn = ["quimb", "cotengra"]          # psf_os.exact_tn; kahypar (optional) gives better contraction orders
 
 [project.scripts]
 psf-os = "psf_os.cli:main"

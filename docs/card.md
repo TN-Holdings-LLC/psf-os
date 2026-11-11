@@ -3,7 +3,8 @@
 A problem card is one JSON file that states a time-evolution problem of a spin system: the lattice, the Hamiltonian,
 the initial state, the time steps and their Trotter order, what is measured, and optionally a declared conserved
 quantity. `psf_os.card` checks it at the entrance (before anything runs), builds the logical first-order Trotter
-circuit from it, and computes that circuit's exact expectation values (statevector, up to 28 sites).
+circuit from it, and computes that circuit's exact expectation values (statevector up to 28 sites; light-cone tensor
+network above, method "tn", 2026-11-11).
 
 Placement is not part of the card. The logical circuit is handed to psf-os's existing entrance. `user2d.py` and
 `compile.py` are unchanged.
@@ -12,7 +13,8 @@ Status: first version (2026-11-10). Not declared.
 
 ```
 python -m psf_os.card check CARD.json            # entrance checks; exit 2 with every reason when refused
-python -m psf_os.card exact CARD.json [--out A]  # exact expectation values of the card's Trotter circuit
+python -m psf_os.card exact CARD.json [--out A] [--method auto|statevector|aer|tn]
+                                                 # exact expectation values of the card's Trotter circuit
 ```
 
 ```python
@@ -126,7 +128,8 @@ Every reason found is listed, not only the first one.
 - **Initial state:** the length and the characters are valid.
 - **Measurement:** the ops and sites are valid.
 - **Conserved quantity:** [H, Q] = 0, to a largest coefficient of 1e−10.
-- **Size:** at most 28 sites while exact answers are wanted. `check(card, exact=False)` drops this limit.
+- **Size:** at most 28 sites while exact answers are wanted. `check(card, exact=False)` (CLI `check --tn`) drops this
+  limit; `exact(card, method="tn")` and `"auto"` then refuse by the memory guard instead (below).
 
 The conserved-quantity check runs only when the card has no other fault.
 
@@ -185,8 +188,21 @@ The merged answers equal the term-by-term ones to 1.7e−13 or better.
 
 `C.exact` returns the exact expectation value of every observable of the card's own Trotter circuit, not of
 exp(−iHt).
-- Up to 20 sites it uses `qiskit.quantum_info.Statevector`.
-- From 21 to 28 sites it uses qiskit-aer's `save_expectation_value`.
+- `method="auto"` (default): up to 20 sites `qiskit.quantum_info.Statevector`; above 20 sites `"tn"` (until
+  2026-11-10, 21 to 28 sites used qiskit-aer; `method="aer"` still does).
+- `method="tn"` (2026-11-11, `psf_os.exact_tn`; needs quimb and cotengra, `pip install .[tn]`): each observable's
+  backward light cone as a tensor network. Gates outside the cone cancel between ket and bra and are left out;
+  diagonal gates (RZ, RZZ, CZ) add no index; a Pauli product enters as one 2 x 2 tensor per site. quimb's exact
+  simplifications shrink the network, cotengra searches the contraction order.
+  - **Memory guard, not a site limit:** before contracting, the largest intermediate tensor of the order is compared
+    with `max_size` (default 2^27 elements, 2 GiB of complex128). Over it, the order is searched again with slices;
+    if it still does not fit (or `slicing=False`), the card is refused with the reason and nothing is computed.
+    `max_cost` (flops, optional) refuses an order that would take too long.
+  - `C.exact(card, method="tn", info=reps)` fills `reps` with the cone, tensors, largest intermediate, slices, cost
+    and seconds per observable.
+  - Acceptance (`examples/exact_tn_accept.py`): equal to the statevector on the example cards (merge on and off) and
+    to TOQB's released utility answers on the Eagle graph; equal to Aer's stabilizer method on 72 sites at the
+    Clifford points.
 
 ## Example cards (`examples/cards/`)
 
