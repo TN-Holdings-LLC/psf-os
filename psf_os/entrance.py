@@ -25,10 +25,16 @@ day's record refuses with its reason and the entrance does not fall through to a
           logical cycle's i-th site from its smallest index towards its smaller neighbour. Otherwise refused.
   labels  every edge of G is a coupler of the Heron r2 graph: the circuit is already written on device labels and goes
           to user2d unchanged (its translation copy is user2d's rule).
+  grid3d  G is a 4 x M x N cubic lattice in the user's own product order (M <= 8 rows, N <= 4 blocks of the fold, or
+          the reverse; N = 1: a 4 x M square grid), any one- and two-qubit gates (psf_os.entrance3d): kicked-Ising
+          circuits go through grid3d.prepare itself (fold v3.1 default, v3.2, line: the declared 3D jobs unchanged),
+          any other circuit through the generic fold walker (diagonal gates through the bridge by CX copies,
+          others by moving through the empty bridge); swaps and bridge moves reported. Its records are grid3d's
+          (labels = site indices), its mirror grid3d.mirror_of_compiled. Twin and special are not wired for it.
   strip   G equals a honeycomb strip's bonds in the strip's own label order (psf_os.strip: rows 0..R-1, columns 0..c
           and the bridges inside; index k = the strip's k-th label). Other labellings of the same graph are not searched.
-Refused now, with the reason: a 3D grid or a 2D square grid (G has 4-cycles; heavy-hex has none: 3D runs through
-grid3d's kicked-Ising builder only, a generic 3D circuit is not built), degree above 3, and anything else.
+Refused now, with the reason: a lattice larger than the fold, a square grid without a side of 4, other graphs with
+4-cycles, degree above 3, a disconnected graph, and anything else.
 
 Options (all recorded in build.json):
   mirror="compiled" (default)  the mirror is the compiled circuit, a barrier, its inverse (as hub_build's
@@ -38,7 +44,8 @@ Options (all recorded in build.json):
   twin=False | True    user2d's Clifford twin per circuit; build then writes the twins' exact answers (stabilizer).
   special=None | "quirk_ledger"   the placement candidates (the qualifying translation copies of the family's pattern,
                        in lattice2d's fixed order) are ranked by psf_os.quirk.rank(dev.name, candidates, ledger, before)
-                       and the first is pinned (user2d then uses that copy only). A special condition: it is written
+                       and the first is pinned (user2d then uses that copy only). For a chain the candidates are
+                       the chain rule's own starts (psf_os.quirk_chain.candidates, the workplace VS's; first = default). A special condition: it is written
                        to build.json as such; None (the default) is "special": null and changes nothing.
 """
 from __future__ import annotations
@@ -49,7 +56,8 @@ import os
 
 import numpy as np
 
-FAMILIES = ("chain", "ring", "labels", "strip")
+FAMILIES = ("chain", "ring", "labels", "grid3d", "strip")
+FOLDS = ("v3.1", "v3.2", "line")
 SPECIALS = (None, "quirk_ledger")
 MIRRORS = ("compiled", "logical")
 READ_LINE = 1 - 1 / np.sqrt(2)   # r at which a pure shrink reaches MSE = mean square / 2
@@ -159,6 +167,14 @@ def recognise(dev, items, family="auto"):
             tests["labels"] = ok
             if ok:
                 return dict(family="labels", n=len(nodes), tests=tests)
+        elif fam == "grid3d":
+            from psf_os import entrance3d as E3
+            r3 = E3.recognise(nodes, edges)
+            tests["grid3d"] = bool(r3) and not r3.get("too_large")
+            if r3 and r3.get("too_large"):
+                tests["grid3d_too_large"] = list(r3["dims"])
+            elif r3:
+                return dict(family="grid3d", M=r3["M"], N=r3["N"], rec3=r3, n=len(nodes), tests=tests)
         elif fam == "strip":
             got = S.find(dev.all_couplers(), edges, len(nodes)) if set(nodes) == set(range(len(nodes))) else None
             tests["strip"] = got is not None
@@ -166,9 +182,12 @@ def recognise(dev, items, family="auto"):
                 R, c, phys = got
                 return dict(family="strip", R=R, c=c, phys=phys, n=len(phys), tests=tests)
     deg = max(len(v) for v in a.values())
-    if _has_4cycle(a):
-        why = ("G has 4-cycles (a 2D square or 3D grid): heavy-hex has none; not native now (3D runs through grid3d's "
-               "kicked-Ising builder only; a generic 3D circuit through the fold schedule is not built)")
+    if tests.get("grid3d_too_large"):
+        why = (f"G is a {tests['grid3d_too_large']} lattice: the fold layout takes 4 x M x N with M <= 8 rows and N <= 4 "
+               "blocks (or the reverse)")
+    elif _has_4cycle(a):
+        why = ("G has 4-cycles but is not a 4 x M x N lattice in its own product order (a square grid needs a side of "
+               "4: it then runs as 4 x M x 1); heavy-hex has no 4-cycles")
     elif deg > 3:
         why = f"G has a site of degree {deg}: heavy-hex has degree 3 at most"
     elif not _connected(nodes, a):
@@ -205,6 +224,9 @@ def placement(dev, rec):
         return None, dict(rule="labels")
     if fam == "strip":
         return {k: p for k, p in enumerate(rec["phys"])}, dict(rule="strip", R=rec["R"], c=rec["c"], phys=rec["phys"])
+    if fam == "grid3d":
+        r3 = rec["rec3"]
+        return None, dict(rule="fold", M=r3["M"], N=r3["N"], dims=list(r3["dims"]), axes=list(r3["perm"]))
     raise Refused(fam)
 
 
@@ -288,17 +310,56 @@ def candidates(dev, mapping, edges):
     return out
 
 
-def apply_special(dev, special, mapping, edges, ledger=None, before=None, quirk=None):
-    """(mapping, record): the special condition's choice. quirk: the module (default psf_os.quirk, the VS's)."""
+def chain_candidates(dev, rec, quirk_chain=None):
+    """Chain family: the chain rule's own chains, one per start, from psf_os.quirk_chain.candidates (the workplace VS's;
+    first = the default). Each gets the map {logical site: label}; `default_is_rule` says whether the first equals the
+    chain chain_of places (translated by lattice2d as user2d does)."""
+    from psf_os import chain as CH
+    from psf_os import lattice2d as L
+    if quirk_chain is None:
+        try:
+            from psf_os import quirk_chain
+        except ImportError:
+            raise Refused("special 'quirk_ledger' on a chain: psf_os.quirk_chain is not present (the VS's piece)") \
+                from None
+    n = rec["n"]
+    cs = quirk_chain.candidates(dev, n)
+    labels, _ = CH.chain_of(dev, n)
+    _, _, m, _ = L.place(dev, [tuple(sorted(e)) for e in zip(labels, labels[1:])], labels)
+    rule_phys = [m[q] for q in labels]
+    out = []
+    for c in cs:
+        qs = [int(q) for q in c["qubits"]]
+        if len(qs) != n:
+            raise Refused(f"chain candidate {c['name']} has {len(qs)} sites, not {n}")
+        out.append(dict(name=c["name"], qubits=qs, map={q: qs[i] for i, q in enumerate(rec["order"])}))
+    return out, bool(out) and (out[0]["qubits"] == rule_phys or out[0]["qubits"] == rule_phys[::-1])
+
+
+def apply_special(dev, special, mapping, edges, ledger=None, before=None, quirk=None, rec=None, quirk_chain=None):
+    """(mapping, record): the special condition's choice. quirk: the module (default psf_os.quirk, the VS's). For a
+    chain (rec family "chain") the candidates are the chain rule's starts (chain_candidates); otherwise the
+    qualifying translation copies of the placed pattern."""
     if special is None:
         return mapping, None
     if special not in SPECIALS:
         raise Refused(f"special {special!r} is not one of {SPECIALS}")
+    if rec is not None and rec["family"] == "grid3d":
+        raise Refused("special 'quirk_ledger' is not wired for the 3D fold (its translations are grid3d's)")
     if quirk is None:
         try:
             from psf_os import quirk
         except ImportError:
             raise Refused("special 'quirk_ledger': psf_os.quirk is not present (the VS's piece)") from None
+    if rec is not None and rec["family"] == "chain":
+        cs, default_ok = chain_candidates(dev, rec, quirk_chain)
+        if not cs:
+            raise Refused("special 'quirk_ledger': no chain candidate to rank")
+        ordered, report = quirk.rank(dev.name, [dict(name=c["name"], qubits=c["qubits"]) for c in cs], ledger, before)
+        first = next(c for c in cs if c["name"] == ordered[0]["name"])
+        return dict(first["map"]), dict(name=special, kind="chain starts", chosen=first["name"],
+                                        first_by_rule=cs[0]["name"], default_is_rule_choice=default_ok,
+                                        candidates=[c["name"] for c in cs], report=report)
     cs = candidates(dev, mapping, edges)
     if not cs:
         raise Refused("special 'quirk_ledger': no qualifying copy to rank")
@@ -306,7 +367,7 @@ def apply_special(dev, special, mapping, edges, ledger=None, before=None, quirk=
     first = next(c for c in cs if c["name"] == ordered[0]["name"])
     m = first["map"]
     new = {k: m[v] for k, v in mapping.items()} if mapping else {q: m[q] for q in m}
-    return new, dict(name=special, chosen=first["name"], first_by_rule=cs[0]["name"],
+    return new, dict(name=special, kind="translation copies", chosen=first["name"], first_by_rule=cs[0]["name"],
                      candidates=[c["name"] for c in cs], report=report)
 
 
@@ -333,7 +394,8 @@ def boundary_hint(path, family_prefix=None):
                 read_up_to_layers=max(read) if read else None, first_not_read_layers=min(not_read) if not_read else None)
 
 
-def cost(dev, items, placed, shots, max_seconds, twin=False, boundary=None, boundary_prefix=None, pinned=False):
+def cost(dev, items, placed, shots, max_seconds, twin=False, boundary=None, boundary_prefix=None, pinned=False,
+         pre3=None):
     """Per item: CZ, CZ layers, logical two-qubit layers, inflation, CZ per qubit, qubits; the job's seconds by the
     time model (the ring sentinel's circuits included once the job is built: see build's qpu_seconds_model)."""
     from psf_os import job as J
@@ -343,7 +405,11 @@ def cost(dev, items, placed, shots, max_seconds, twin=False, boundary=None, boun
     from psf_os import mirror2d as M
     rc = RuleCompiler(dev)
     per = {}
+    pre3 = pre3 or {}
     for tag, qc in items:
+        if tag in pre3:
+            per[tag] = _cost3d(qc, pre3[tag])
+            continue
         u2 = placed[tag]
         labels, edges, logical = U.analyse(u2, dev)
         dr, dc, m, _ = L.place(dev, edges, labels, offsets=[(0, 0)] if pinned else None)
@@ -370,36 +436,78 @@ def groups(items):
     return list(out.items())
 
 
-def _prepare(dev, items, family, special, ledger, before, quirk):
+def _prepare(dev, items, family, special, ledger, before, quirk, quirk_chain=None, fold="v3.1", at3d=None,
+             twin=False):
     """Each group of items with one interaction graph is recognised and placed on its own (as hub_build placed each L
-    on its own chain). Returns (groups report, {tag: mapping}, {tag: circuit on device labels})."""
+    on its own chain). Returns (groups report, {tag: mapping}, {tag: circuit on device labels (2D)},
+    {tag: prepared 3D item (psf_os.entrance3d.prepare)})."""
     by = dict(items)
-    reps, maps, placed = [], {}, {}
+    reps, maps, placed, pre3 = [], {}, {}, {}
+    rc = None
+    if fold not in FOLDS:
+        raise Refused(f"fold {fold!r} is not one of {FOLDS}")
     for (nodes, edges), tags in groups(items):
         sub = [(t, by[t]) for t in tags]
         rec = recognise(dev, sub, family)
         mapping, how = placement(dev, rec)
-        mapping, sp = apply_special(dev, special, mapping, list(edges), ledger, before, quirk)
+        if rec["family"] == "grid3d":
+            from psf_os import entrance3d as E3
+            from psf_os.compile import RuleCompiler
+            if special is not None:
+                apply_special(dev, special, mapping, list(edges), ledger, before, quirk, rec=rec)
+            if twin:
+                raise Refused("twin is not wired for the 3D fold yet (grid3d writes its own records)")
+            rc = rc or RuleCompiler(dev)
+            paths = set()
+            for t in tags:
+                try:
+                    pre3[t] = E3.prepare(dev, by[t], rec["rec3"], fold=fold, rc=rc, at=at3d)
+                except (E3.Refused3D, Exception) as e:
+                    if isinstance(e, (E3.Refused3D,)) or "Refused" in type(e).__name__:
+                        raise Refused(f"{t}: 3D: {e}") from None
+                    raise
+                maps[t] = None
+                paths.add(pre3[t]["path"])
+            w = pre3[tags[0]]["where"]
+            how = dict(how, paths=sorted(paths), fold=fold, at=at3d,
+                       **{k: w[k] for k in ("layout", "r0", "c0") if k in w})
+            reps.append(dict(tags=tags, n=len(nodes), family="grid3d", tests=rec["tests"], placement=how,
+                             special=None, mapping={t: pre3[t].get("site_label") or
+                                                    {str(s): q for s, q in enumerate(pre3[t]["phys"])} for t in tags}))
+            continue
+        mapping, sp = apply_special(dev, special, mapping, list(edges), ledger, before, quirk, rec=rec,
+                                    quirk_chain=quirk_chain)
         reps.append(dict(tags=tags, n=len(nodes), family=rec["family"], tests=rec["tests"], placement=how, special=sp,
                          mapping=None if mapping is None else {str(k): v for k, v in mapping.items()}))
         for t in tags:
             maps[t] = mapping
             placed[t] = on_labels(by[t], mapping, dev.num_qubits)
-    return reps, maps, placed
+    return reps, maps, placed, pre3
+
+
+def _cost3d(qc, pr):
+    l2 = two_qubit_layers(qc)
+    lay = cz_layers(pr["cu"])
+    n = len(pr["phys"])
+    w = pr["where"]
+    return dict(cz=pr["cz"], cz_layers=lay, logical_2q_layers=l2, inflation=(lay / l2) if l2 else None, qubits=n,
+                qubits_touched=len(pr["used"]), cz_per_qubit=pr["cz"] / n, path=pr["path"],
+                swaps=w.get("swaps"), bridge_moves=w.get("bridge_moves"), schedule_rounds=w.get("rounds"))
 
 
 def check(dev, items, family="auto", shots=4000, max_seconds=160, twin=False, special=None, ledger=None, before=None,
-          quirk=None, boundary=None, boundary_prefix=None):
+          quirk=None, boundary=None, boundary_prefix=None, quirk_chain=None, fold="v3.1", at3d=None):
     """Family, placement and cost before anything is written."""
-    reps, maps, placed = _prepare(dev, items, family, special, ledger, before, quirk)
+    reps, maps, placed, pre3 = _prepare(dev, items, family, special, ledger, before, quirk, quirk_chain, fold, at3d,
+                                        twin)
     return dict(device=dev.name, groups=reps, special=special,
                 cost=cost(dev, items, placed, shots, max_seconds, twin, boundary, boundary_prefix,
-                          pinned=special is not None))
+                          pinned=special is not None, pre3=pre3))
 
 
 def build(dev, items, out, answers=None, answers_out=None, shots=4000, max_seconds=160, family="auto",
           mirror="compiled", sentinel_fallback=None, twin=False, special=None, ledger=None, before=None, quirk=None,
-          boundary=None, boundary_prefix=None):
+          boundary=None, boundary_prefix=None, quirk_chain=None, fold="v3.1", at3d=None):
     """Recognise, place, build the job (user2d.build_batch) and write out/build.json. answers: {tag: [exact <Z> per
     logical site]} (optional), written by device label to answers_out (outside the job); twin answers (if twin) to
     answers_out's name + '_twin.json' or out/twin_answers.json."""
@@ -412,15 +520,32 @@ def build(dev, items, out, answers=None, answers_out=None, shots=4000, max_secon
     for p in (out, answers_out):
         if p and os.path.exists(p):
             raise Refused(f"{p} exists (nothing is overwritten)")
-    reps, maps, placed = _prepare(dev, items, family, special, ledger, before, quirk)
+    reps, maps, placed, pre3 = _prepare(dev, items, family, special, ledger, before, quirk, quirk_chain, fold, at3d,
+                                        twin)
     spec = dict(sentinel.SENTINEL_JOB, fallback=sentinel_fallback) if sentinel_fallback else None
-    with compiled_mirror(dev, mirror == "compiled"), pinned_copy(special is not None):
-        rep = U.build_batch(dev, [(t, placed[t]) for t, _ in items], out, shots=shots, max_seconds=max_seconds,
-                            sentinel_spec=spec, **(dict(twin=True) if twin else {}))
     runs = os.path.join(out, "runs")
-    from qiskit import qpy
     per = {}
+    if pre3:
+        from psf_os import entrance3d as E3
+        os.makedirs(runs)
+        g3 = {t: g for g in reps if g["family"] == "grid3d" for t in g["tags"]}
+        for tag, qc in items:
+            if tag in pre3:
+                p3 = g3[tag]["placement"]
+                E3.write_records(dev, runs, tag, pre3[tag], shots, p3["M"], p3["N"],
+                                 extra=dict(entrance_path=pre3[tag]["path"]))
+                per[tag] = _cost3d(qc, pre3[tag])
+    items2 = [(t, placed[t]) for t, _ in items if t not in pre3]
+    if items2:
+        with compiled_mirror(dev, mirror == "compiled"), pinned_copy(special is not None):
+            rep = U.build_batch(dev, items2, out, shots=shots, max_seconds=max_seconds,
+                                sentinel_spec=spec, **(dict(twin=True) if twin else {}))
+    else:
+        rep = _sentinel_and_assemble(dev, out, shots, max_seconds, spec)
+    from qiskit import qpy
     for tag, qc in items:
+        if tag in pre3:
+            continue
         cu = qpy.load(open(os.path.join(runs, f"p2d_{tag}.qpy"), "rb"))[0]
         l2, lay = two_qubit_layers(qc), cz_layers(cu)
         it = rep["items"][tag]
@@ -447,6 +572,20 @@ def build(dev, items, out, answers=None, answers_out=None, shots=4000, max_secon
              shots=shots, circuits=rep["circuits"], qpu_seconds_model=rep["qpu_seconds_model"])
     json.dump(b, open(os.path.join(out, "build.json"), "w"), indent=1)
     return b
+
+
+def _sentinel_and_assemble(dev, out, shots, max_seconds, spec, ring=40):
+    """The ring sentinel and the job, as user2d.build_batch adds them, for a job without 2D items."""
+    from psf_os import circuits as C
+    from psf_os import job as J
+    from psf_os import sentinel
+    from psf_os.compile import RuleCompiler, measured_qubits
+    rc = RuleCompiler(dev)
+    runs = os.path.join(out, "runs")
+    mq = measured_qubits(rc.compile(C.model_circuit(list(np.zeros(C.n_model_angles(ring, 1))), ring, 1)))
+    sentinel.build(dev, runs, [int(mq[j]) for j in range(ring)], shots, rc, spec=spec)
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
+    return dict(circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], items={})
 
 
 def twin_answers(out, tags, path):

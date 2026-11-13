@@ -29,7 +29,7 @@
     psf-os entrance check|build --device DEV_DIR --circuit FILE.qpy [...] [--out DIR] [--answers A.json --answers-out
                  B.json] [--shots N] [--max-seconds S] [--family auto|chain|ring|labels|strip] [--mirror compiled|logical]
                  [--sentinel-fallback same_qubits] [--twin] [--special quirk_ledger --ledger L --before ISO]
-                 [--boundary BOUNDARY.json [--boundary-prefix P]]
+                 [--boundary BOUNDARY.json [--boundary-prefix P]] [--fold v3.1|v3.2|line] [--at3d R0,C0]
                                                            one entrance for logical circuits (psf_os.entrance): family
                                                            by fixed tests, placement, cost, controls; check writes nothing
     psf-os entrance score --out DIR [--answers BYLABEL.json] [--twin-answers T.json]
@@ -154,6 +154,9 @@ def main(argv=None):
     en.add_argument("--before", default=None)
     en.add_argument("--boundary", default=None)
     en.add_argument("--boundary-prefix", default=None)
+    en.add_argument("--fold", default="v3.1", choices=("v3.1", "v3.2", "line"), help="3D family: the fold version")
+    en.add_argument("--at3d", default=None, help="3D family: translations r0,c0[;r0,c0...] to restrict the fold's "
+                    "fixed order to")
     a = p.parse_args(argv)
     now = (dt.datetime.fromisoformat(a.now) if getattr(a, "now", None) else P.now_cet())
 
@@ -346,7 +349,8 @@ def _entrance(a):
         items = _entrance_items(a.circuit)
         led = json.load(open(a.ledger)) if a.ledger else None
         kw = dict(family=a.family, shots=a.shots, max_seconds=a.max_seconds, twin=a.twin, special=a.special,
-                  ledger=led, before=a.before, boundary=a.boundary, boundary_prefix=a.boundary_prefix)
+                  ledger=led, before=a.before, boundary=a.boundary, boundary_prefix=a.boundary_prefix, fold=a.fold,
+                  at3d=[tuple(int(v) for v in x.split(",")) for x in a.at3d.split(";")] if a.at3d else None)
         if a.action == "check":
             print(json.dumps(E.check(dev, items, **kw), indent=1, default=str))
             return 0
