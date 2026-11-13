@@ -130,10 +130,13 @@ def _tag_ok(tag):
     return bool(tag) and all(ch.isalnum() or ch in "_.-" for ch in tag)
 
 
-def build_batch(dev, items, out, shots=4000, ring=40, sentinel_spec=None, max_seconds=60):
+def build_batch(dev, items, out, shots=4000, ring=40, sentinel_spec=None, max_seconds=60, twin=False):
     """Several user circuits in one job: items = [(tag, QuantumCircuit), ...]. Each circuit is placed by translation on
     its own (its own copy), compiled, and given its own floor and mirror; one ring sentinel serves the whole job. If any
-    circuit is refused, nothing is written for any of them. Returns {"items": {tag: report}, "circuits", ...}."""
+    circuit is refused, nothing is written for any of them. Returns {"items": {tag: report}, "circuits", ...}.
+    twin=True also records, per circuit, its Clifford twin (psf_os.twin: the compiled circuit with RZ angles rounded to
+    multiples of pi/2, the same physical pulses) as run p2d_<tag>_twin (kind user2d_twin), submitted as built; the
+    acceptance then also requires the same non-RZ schedule. Default False: the job is exactly as before."""
     import numpy as _np
     from psf_os import circuits as C
     from psf_os import job as J
@@ -166,13 +169,18 @@ def build_batch(dev, items, out, shots=4000, ring=40, sentinel_spec=None, max_se
                       floor_diagonal=all(i.operation.name in ("cz", "rz", "barrier", "measure", "delay")
                                          for i in cf.data),
                       mirror_cz=M.cz_count(cm) == 2 * cz_u, mirror_measures=measured_qubits(cm) == want)
+        ct = None
+        if twin:
+            from psf_os import twin as TW
+            ct = TW.twin(cu)
+            checks["twin_schedule"] = TW.check_same_schedule(cu, ct)
         if not all(checks.values()):
             raise Refused(f"{tag}: acceptance failed: {checks}")
-        prepared.append((tag, labels, edges, dr, dc, m, reasons, cu, cf, cm, cz_u, checks))
+        prepared.append((tag, labels, edges, dr, dc, m, reasons, cu, cf, cm, cz_u, checks, ct))
     runs = os.path.join(out, "runs")
     os.makedirs(runs, exist_ok=True)
     reps = {}
-    for tag, labels, edges, dr, dc, m, reasons, cu, cf, cm, cz_u, checks in prepared:
+    for tag, labels, edges, dr, dc, m, reasons, cu, cf, cm, cz_u, checks, ct in prepared:
         common = dict(labels=labels, mapping=m, shots=shots)
         copy = dict(copy=dict(drow=dr, dcol=dc, passed_over=reasons), edges=[list(e) for e in edges])
         _record(dev, runs, f"p2d_{tag}", "user", "user2d", [cu], [dict(input="u", setting="z")],
@@ -181,6 +189,9 @@ def build_batch(dev, items, out, shots=4000, ring=40, sentinel_spec=None, max_se
                 extra=dict(cz=M.cz_count(cf), tag=tag), valid=True, **common)
         _record(dev, runs, f"p2d_{tag}_mirror", "mirror", "user2d_mirror", [cm], [dict(input="m", setting="z")],
                 extra=dict(cz=M.cz_count(cm), cz_expected=2 * cz_u, tag=tag), valid=True, **common)
+        if ct is not None:
+            _record(dev, runs, f"p2d_{tag}_twin", "twin", "user2d_twin", [ct], [dict(input="t", setting="z")],
+                    extra=dict(cz=M.cz_count(ct), tag=tag), valid=True, **common)
         reps[tag] = dict(labels=labels, edges=[list(e) for e in edges], copy=dict(drow=dr, dcol=dc),
                          passed_over=reasons, mapping={str(q): m[q] for q in labels}, cz=cz_u, checks=checks)
     mq = measured_qubits(rc.compile(C.model_circuit(list(_np.zeros(C.n_model_angles(ring, 1))), ring, 1)))
