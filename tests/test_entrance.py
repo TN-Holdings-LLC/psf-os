@@ -126,9 +126,10 @@ def test_special_hook_with_a_fake_quirk(tmp_path):
         calls.update(dev=dev_name, n=len(cands), ledger=ledger, before=before)
         return list(reversed(cands)), dict(fake=True)
     fake = types.SimpleNamespace(rank=rank)
-    items = [("q", _chain_circuit(6))]
+    items = [("q", _graph_circuit(20, [(2, 3), (3, 4), (3, 16)]))]     # Heron labels: translation copies
     r = E.check(dev, items, special="quirk_ledger", quirk=fake, ledger={"x": 1}, before="2026-11-13")
     sp = r["groups"][0]["special"]
+    assert r["groups"][0]["family"] == "labels" and sp["kind"] == "translation copies"
     assert calls["dev"] == dev.name and calls["ledger"] == {"x": 1} and calls["n"] > 1
     assert sp["name"] == "quirk_ledger" and sp["chosen"] != sp["first_by_rule"] and sp["report"] == dict(fake=True)
     b = E.build(dev, items, str(tmp_path / "s"), special="quirk_ledger", quirk=fake, shots=300)
@@ -137,10 +138,9 @@ def test_special_hook_with_a_fake_quirk(tmp_path):
     assert sorted(rec["labels"]) == chosen                    # user2d kept the pinned copy
     from psf_os import lattice2d as L
     assert L.place.__name__ == "place" and L.place.__module__ == "psf_os.lattice2d"   # restored
-    sys.modules.pop("psf_os.quirk", None)
-    if not os.path.exists(os.path.join(os.path.dirname(E.__file__), "quirk.py")):
-        with pytest.raises(E.Refused, match="not present"):
-            E.check(dev, items, special="quirk_ledger")
+    if not os.path.exists(os.path.join(os.path.dirname(E.__file__), "quirk_chain.py")):
+        with pytest.raises(E.Refused, match="quirk_chain is not present"):
+            E.check(dev, [("c", _chain_circuit(6))], special="quirk_ledger", quirk=fake)
 
 
 def test_options_are_recorded_and_checked(tmp_path):
