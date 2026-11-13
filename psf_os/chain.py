@@ -143,3 +143,79 @@ def check(dev, chain, suspect=True):
     why += [f"qubit {q} not usable" for q in chain if not q_ok(q)]
     why += [f"link ({a}, {b}) not usable" for a, b in zip(chain, chain[1:]) if not e_ok(a, b)]
     return why
+
+
+# ---- fixed chain shapes and the entrance's chain choice (2026-11-13; added functions only, rule C above unchanged) --
+# Ported from the lab notebook (daily/du91.py: SHAPES, snake, place; gpu/hub_build.py: chain_of) so that
+# psf_os.entrance places a chain exactly as the declared builders of 2026-11-07 to 2026-11-12 did.
+
+SHAPES = [
+    ("S1", 0, 15, 1, 0),    # rows 0.., full width: 16 + 16 per row after (15 cols + bridge)
+    ("S2", 1, 15, 1, 0),    # the same pattern starting on an odd row (gaps' parity swapped)
+    ("S3", 0, 11, 1, 1),    # narrower: columns 1-11 (copies at dcol 0 and 4: columns 5-15)
+    ("S4", 0, 3, 13, 15),   # columns 3-13, the first row from column 15
+]
+
+
+def _shape_bridge(r, col):
+    k = (col - 3) // 4 if r % 2 == 0 else (col - 1) // 4
+    ok = (col - 3) % 4 == 0 if r % 2 == 0 else (col - 1) % 4 == 0
+    return STRIDE * r + 16 + k if ok and 0 <= k <= 3 else None
+
+
+def snake(n, shape, rows=ROWS):
+    """The first n labels of a shape's snake (raises ValueError if it does not fit in the lattice)."""
+    _, r0, e_turn, o_turn, start = shape if len(shape) == 5 else (None, *shape)
+    out = []
+    r, col = r0, start
+    while True:
+        turn = e_turn if r % 2 == 0 else o_turn
+        step = 1 if turn >= col else -1
+        for c in range(col, turn + step, step):
+            out.append(STRIDE * r + c)
+            if len(out) == n:
+                return out
+        if r + 1 >= rows:
+            raise ValueError(f"shape {shape} holds only {len(out)} sites")
+        b = _shape_bridge(r, turn)
+        if b is None:
+            raise ValueError(f"no bridge at row {r}, column {turn}")
+        out.append(b)
+        if len(out) == n:
+            return out
+        r += 1
+        nxt = o_turn if r % 2 else e_turn
+        col = turn
+        if nxt == turn:
+            raise ValueError("a row would have no length")
+
+
+def shape_place(dev, n, shapes=SHAPES):
+    """The first shape (in order) with a qualifying copy by translation (psf_os.lattice2d), or shape None and the
+    reasons (as daily/du91.place)."""
+    from psf_os import lattice2d as L
+    reasons = []
+    for sh in shapes:
+        try:
+            ch = snake(n, sh)
+        except ValueError as e:
+            reasons.append(dict(shape=sh[0], why=str(e)))
+            continue
+        try:
+            dr, dc, m, passed = L.place(dev, [tuple(sorted(e)) for e in zip(ch, ch[1:])], ch)
+            return dict(shape=sh[0], drow=dr, dcol=dc, chain=[m[q] for q in ch], passed_over=reasons + [
+                dict(shape=sh[0], copies_passed=passed)])
+        except RuntimeError as e:
+            reasons.append(dict(shape=sh[0], why=str(e)[:300]))
+    return dict(shape=None, passed_over=reasons)
+
+
+def chain_of(dev, n):
+    """(labels, how) of an n-site chain as the declared builders chose it: the fixed shapes first (labels of the
+    shape's own snake; the user entrance then translates it), else rule C (place)."""
+    pl = shape_place(dev, n)
+    if pl["shape"] is not None:
+        shape = next(s for s in SHAPES if s[0] == pl["shape"])
+        return list(snake(n, shape)), dict(rule="shape", shape=pl["shape"], passed_over=pl["passed_over"])
+    rc = place(dev, n)
+    return list(rc["chain"]), dict(rule="C", start=rc["start"], passed_over=pl["passed_over"])

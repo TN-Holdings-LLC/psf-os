@@ -26,6 +26,15 @@
                     [--registry REG.json] [--now ISO]      the self-repair chain for the P6 patch (psf_os.repair2d):
                                                            confirmed exclusions, A's and B's copies, the log
 
+    psf-os entrance check|build --device DEV_DIR --circuit FILE.qpy [...] [--out DIR] [--answers A.json --answers-out
+                 B.json] [--shots N] [--max-seconds S] [--family auto|chain|ring|labels|strip] [--mirror compiled|logical]
+                 [--sentinel-fallback same_qubits] [--twin] [--special quirk_ledger --ledger L --before ISO]
+                 [--boundary BOUNDARY.json [--boundary-prefix P]]
+                                                           one entrance for logical circuits (psf_os.entrance): family
+                                                           by fixed tests, placement, cost, controls; check writes nothing
+    psf-os entrance score --out DIR [--answers BYLABEL.json] [--twin-answers T.json]
+                                                           READS / AGREES / r / split; r_twin against 0.293 (caveat)
+
 A registry file is never overwritten: scan-ingest writes the next one (TOQB's list_after convention).
 """
 from __future__ import annotations
@@ -124,6 +133,27 @@ def main(argv=None):
     rp.add_argument("--out", required=True)
     rp.add_argument("--registry", default=None)
     rp.add_argument("--now", default=None)
+    en = sp.add_parser("entrance", help="one entrance for logical circuits (psf_os.entrance)")
+    en.add_argument("action", choices=("check", "build", "score"))
+    en.add_argument("--device", default=None)
+    en.add_argument("--circuit", nargs="+", default=[], help="QPY files; every circuit in them, tag = the circuit's "
+                    "name (or FILE-STEM_k)")
+    en.add_argument("--out", default=None)
+    en.add_argument("--answers", default=None, help="build: JSON {tag: [exact <Z> per logical site]}; score: JSON "
+                    "{tag: {label: exact <Z>}} (build's --answers-out)")
+    en.add_argument("--answers-out", default=None)
+    en.add_argument("--twin-answers", default=None)
+    en.add_argument("--shots", type=int, default=4000)
+    en.add_argument("--max-seconds", type=float, default=160)
+    en.add_argument("--family", default="auto")
+    en.add_argument("--mirror", default="compiled", choices=("compiled", "logical"))
+    en.add_argument("--sentinel-fallback", default=None, choices=(None, "same_qubits"))
+    en.add_argument("--twin", action="store_true")
+    en.add_argument("--special", default=None, choices=(None, "quirk_ledger"))
+    en.add_argument("--ledger", default=None)
+    en.add_argument("--before", default=None)
+    en.add_argument("--boundary", default=None)
+    en.add_argument("--boundary-prefix", default=None)
     a = p.parse_args(argv)
     now = (dt.datetime.fromisoformat(a.now) if getattr(a, "now", None) else P.now_cet())
 
@@ -283,7 +313,53 @@ def main(argv=None):
         from psf_os import gatehash as G
         print(json.dumps({f: G.qpy_hash(f) for f in a.qpy}, indent=1))
         return 0
+    if a.cmd == "entrance":
+        return _entrance(a)
     return 2
+
+
+def _entrance_items(paths):
+    from qiskit import qpy
+    from psf_os import user2d as U
+    items = []
+    for f in paths:
+        stem = os.path.splitext(os.path.basename(f))[0]
+        with open(f, "rb") as fh:
+            cs = qpy.load(fh)
+        for k, c in enumerate(cs):
+            t = c.name if c.name and U._tag_ok(c.name) and not c.name.startswith("circuit-") else f"{stem}_{k}"
+            items.append((t, c))
+    return items
+
+
+def _entrance(a):
+    from psf_os import entrance as E
+    try:
+        if a.action == "score":
+            ans = json.load(open(a.answers)) if a.answers else None
+            tw = json.load(open(a.twin_answers)) if a.twin_answers else None
+            res = E.score(a.out, ans, tw)
+            print(json.dumps({t: dict(M=r["card"]["M"], sentinel=r["card"]["sentinel"], verdict=r.get("verdict"),
+                                      twin=r.get("twin")) for t, r in res.items()}, indent=1))
+            return 0
+        dev = Dv.Device.load(a.device)
+        items = _entrance_items(a.circuit)
+        led = json.load(open(a.ledger)) if a.ledger else None
+        kw = dict(family=a.family, shots=a.shots, max_seconds=a.max_seconds, twin=a.twin, special=a.special,
+                  ledger=led, before=a.before, boundary=a.boundary, boundary_prefix=a.boundary_prefix)
+        if a.action == "check":
+            print(json.dumps(E.check(dev, items, **kw), indent=1, default=str))
+            return 0
+        ans = json.load(open(a.answers)) if a.answers else None
+        b = E.build(dev, items, a.out, answers=ans, answers_out=a.answers_out, mirror=a.mirror,
+                    sentinel_fallback=a.sentinel_fallback, **kw)
+        print(json.dumps(dict(groups=[dict(tags=len(g["tags"]), n=g["n"], family=g["family"],
+                                           rule=g["placement"].get("rule")) for g in b["groups"]],
+                              circuits=b["circuits"], qpu_seconds_model=b["qpu_seconds_model"]), indent=1))
+        return 0
+    except E.Refused as e:
+        print(f"REFUSED: {e}", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":
