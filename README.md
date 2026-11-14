@@ -17,6 +17,30 @@ their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/
 2026-11-12; the old links redirect); every device result below was declared (hash and time locked in git) before its
 data existed.
 
+## What it does differently, and what it does not do
+
+Next to Qiskit and IBM Runtime, which aim to give any circuit the best value they can (layouts scored with the day's
+error rates, results corrected by mitigation), psf-os aims to say how far a value can be trusted, for the circuit
+shapes it knows:
+
+- **No calibration map.** Placement reads the coupling graph and the elements marked as failed, never an error rate:
+  the same circuit lands on the same qubits whatever the day's calibration says, so results compare across days and a
+  run can be declared before the calibration is fetched.
+- **Checks in the same job, reported, never used to correct.** A floor (the circuit's own CZs with nothing to
+  compute), a mirror (the compiled circuit and its inverse), a ring sentinel, and the Clifford twin (the same pulses
+  with an exact answer at any size) run beside the user's circuit; the answer card says whether the result reads and
+  how much of the signal the device kept.
+- **A defect list of its own.** Elements found dead by its scans, including defects the calibration does not show,
+  are registered and avoided from then on.
+- **Refusal with a reason.** A circuit that touches a failed element is not sent; a circuit whose shape the entrance
+  does not recognise is refused with the reason.
+- **Records anyone can re-score.** Declarations with sealed answers, raw counts and `reproduce.py`, and the readable
+  depth as the yardstick.
+
+What it does not do: general circuits (only chains, rings, 2D patterns of a lattice and 4 x M x N cubic lattices, on
+IBM heavy-hex devices); error mitigation (so deep circuits often come back as "does not read"); anything a wide user
+base has tested yet (0.1, used by its authors).
+
 ## First device results: practice problems through the user entrance (2026-11-04)
 
 Twenty-two circuits with known answers, written by a user in plain Qiskit (`rz`, `rzz`, `rx`, `h`, `cx`) from the
