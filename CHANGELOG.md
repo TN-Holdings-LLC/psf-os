@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 (2026-11-14)
+
+The same code as 0.1.0. Added `.zenodo.json`, so that each GitHub release is archived on Zenodo with a DOI, with
+TN Holdings as the author and the release linked to papers 6 and 7.
+
 ## 0.1.0 (2026-11-14)
 
 The first release: the code as used for the declared device tests of 2026-11-01 to 2026-11-13 (records in

@@ -14,7 +14,7 @@ The module boundaries are pure functions with JSON-able inputs and outputs, so t
 by Rust (milestone M8). Code taken from TOQB says so at the top of the file.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # The declared rules of TOQB (defect_list.py, safe_loop.py at 8d44f05), used unchanged. Changing any of them is the
 # owner's decision.

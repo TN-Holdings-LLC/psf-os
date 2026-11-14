@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "psf-os"
-version = "0.1.0"
+version = "0.1.1"
 description = "A self-checking layer between a user's circuit and an IBM heavy-hex device, without the calibration map"
 license = "AGPL-3.0-only"
 requires-python = ">=3.11"
