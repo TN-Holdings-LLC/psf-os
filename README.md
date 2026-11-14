@@ -9,9 +9,10 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** Working code, not a release. The experiments behind it, and their records, live in
-[TOQB](https://github.com/TN-Holdings-LLC/TOQB); every device result below was declared (hash and time locked in git)
-before its data existed.
+**Status.** Release 0.1.0 (2026-11-14; changes in [`CHANGELOG.md`](CHANGELOG.md)). The experiments behind it, and
+their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook) (named TOQB until
+2026-11-12; the old links redirect); every device result below was declared (hash and time locked in git) before its
+data existed.
 
 ## First device results: practice problems through the user entrance (2026-11-04)
 
@@ -39,27 +40,27 @@ computed and sealed before the runs.
   - One day, two devices 25 minutes apart, both in a good state (floor 0.96). The spread from day to day is not
     measured yet.
 - The batch ran end to end with no hand step; on fez the entrance moved P4 off a failed coupler by itself.
-- Records: TOQB [`practice-2026-11-04`](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/practice-2026-11-04) and
-  [`practice-fez-2026-11-04`](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/practice-fez-2026-11-04). The same evening, a correction by the floor and the mirror
-  ([fez](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/corr-2026-11-04), [marrakesh](https://github.com/TN-Holdings-LLC/TOQB/tree/main/results/corr-marrakesh-2026-11-04)) worked on one device and not fully on the
+- Records: psf-os-lab-notebook [`practice-2026-11-04`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/tree/main/results/practice-2026-11-04) and
+  [`practice-fez-2026-11-04`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/tree/main/results/practice-fez-2026-11-04). The same evening, a correction by the floor and the mirror
+  ([fez](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/tree/main/results/corr-2026-11-04), [marrakesh](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/tree/main/results/corr-marrakesh-2026-11-04)) worked on one device and not fully on the
   other; it is on hold.
 
 ## The daily record (from 2026-11-05)
 
 Every night, on the devices with a short queue, psf-os solves a fixed problem and a new one from a pool whose answers
 were sealed (hashes committed) before release; raw values, no correction, failures recorded. Rules:
-[`prereg/daily/standing_rules.md`](https://github.com/TN-Holdings-LLC/TOQB/blob/main/prereg/daily/standing_rules.md); the record:
-[`results/daily/RECORD.md`](https://github.com/TN-Holdings-LLC/TOQB/blob/main/results/daily/RECORD.md). Each line gives the declared verdict and, beside
+[`prereg/daily/standing_rules.md`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/blob/main/prereg/daily/standing_rules.md); the record:
+[`results/daily/RECORD.md`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/blob/main/results/daily/RECORD.md). Each line gives the declared verdict and, beside
 it, the retained share of the signal (M / M_exact) and the normalised error: the declared criterion is an absolute
 difference, so a large answer can DIFFER while keeping as much signal as a small one that AGREES.
 
 ## Reproduce
 
-Three levels, from the cheapest. Each needs psf-os and a checkout of [TOQB](https://github.com/TN-Holdings-LLC/TOQB), where the records live.
+Three levels, from the cheapest. Each needs psf-os and a checkout of [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook), where the records live.
 
 ```
 git clone https://github.com/TN-Holdings-LLC/psf-os && pip install "./psf-os[sim]"
-git clone https://github.com/TN-Holdings-LLC/TOQB && cd TOQB
+git clone https://github.com/TN-Holdings-LLC/psf-os-lab-notebook && cd psf-os-lab-notebook
 ```
 
 1. **Re-score from the committed counts (no IBM account, under a minute).** `python reproduce.py` runs every scorer
@@ -72,7 +73,7 @@ git clone https://github.com/TN-Holdings-LLC/TOQB && cd TOQB
    `psf-os submit`, `psf-os collect`, then the result's scorer. A rebuild with another qiskit version gives the same
    gates (checked gate by gate, 2026-11-05) but a different QPY file hash.
 
-Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Holdings-LLC/TOQB/blob/main/results/ENVIRONMENT.md).
+Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/blob/main/results/ENVIRONMENT.md).
 
 ## Layers for 2D circuits
 
@@ -84,8 +85,20 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 | floor | the user's compiled circuit with every non-diagonal one-qubit gate removed: the same CZs, ideal ⟨Z⟩ = 1 |
 | `psf_os.ibm` | `fetch` (coupling graph and failed elements only), `submit` (the job's own device only, dynamical decoupling and twirling off; nothing is sent if a circuit touches a failed element), `collect` |
 | `psf_os.ledger`, `psf_os.repair2d`, `psf_os.crosstalk2d` | drafts (not declared): reliability ledger, the rule-based self-repair chain, crosstalk test pieces |
-| `psf_os.grid3d` (prototype) | `psf-os run3d`: kicked Ising on an L x M x N cubic lattice placed by fixed rules (lattice rows on heavy-hex rows, bonds through the bridge qubits, an odd-even sort of rows), floor and mirror in the same job, read with `result2d`; correct without noise; costs several times what a search-based router needs (see TOQB `notes/os3d_2026-11-06`) |
+| `psf_os.grid3d` (prototype) | `psf-os run3d`: kicked Ising on an L x M x N cubic lattice placed by fixed rules (lattice rows on heavy-hex rows, bonds through the bridge qubits, an odd-even sort of rows), floor and mirror in the same job, read with `result2d`; correct without noise; costs several times what a search-based router needs (see psf-os-lab-notebook `notes/os3d_2026-11-06`) |
 | `psf_os.dual`, `psf_os.kim`, `psf_os.ising2d` | the practice problems P4, P5, P6 as modules, with their exact answers |
+
+## Added 2026-11-07 to 2026-11-13 (in 0.1.0)
+
+| module | does |
+|---|---|
+| `psf_os.entrance`, `psf_os.entrance3d` | one entrance for a logical circuit (`psf-os entrance`): the family recognised from the circuit alone by fixed rules (chains, 2D patterns, 4 x M x N cubic lattices), placed, controls added, one job out |
+| `psf_os.twin` | the Clifford twin of a compiled circuit: every RZ rounded to a multiple of pi/2, the same pulses on Heron (RZ is virtual), exact values by stabilizer simulation at any size; `kept_share` gives the share of the signal a device keeps (`--twin`) |
+| `psf_os.sentinel` fallback | when the rule's ring sentinel cannot be placed (many failed qubits), the user's own qubits carry it (`--sentinel-fallback same_qubits`); the record says so |
+| `psf_os.quirk`, `psf_os.quirk_chain` | the user's own quirk ledger orders placement candidates; a special condition of the placement policy, only when declared (`--special quirk_ledger --ledger L --before ISO`), never reading days after `--before` |
+| `psf_os.chain`, `psf_os.strip` | chains that go round holes (rule C); honeycomb strips of Heron r2 |
+| `psf_os.observables`, `psf_os.exact_tn` | Pauli-string observables beyond per-qubit Z; exact values by a light-cone tensor network (optional `tn` extra) |
+| `psf_os.card`, `psf_os.report2d`, `psf_os.gatehash` | problem cards, the extended answer card, a circuit hash that does not depend on QPY |
 
 ## Layers for rings
 
@@ -101,27 +114,28 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 
 ## Rules
 
-The rules are taken unchanged from TOQB at 8d44f05: the thresholds, the run length, the 4-qubit centre path,
+The rules are taken unchanged from psf-os-lab-notebook (then TOQB) at 8d44f05: the thresholds, the run length, the 4-qubit centre path,
 LISTED after 2 jobs, the 7-day expiry, and the 2-qubit overlap that makes two sightings the same defect. Changing
 any of them is the owner's decision.
 
 ## Tests
 
-`TOQB_DIR=<TOQB checkout> python -m pytest -q` (113 passed, 18 skipped without the optional pieces)
+`TOQB_DIR=<psf-os-lab-notebook checkout> python -m pytest -q` (the variable keeps the notebook's old name; 0.1.0:
+286 passed, 1 skipped, with the notebook checked out and the optional pieces installed)
 
 | test | what it checks |
 |---|---|
-| T1 | the registry made from TOQB's device records equals TOQB's `list_after.json`, byte for byte |
-| T2 | on FakeKingston, FakeMarrakesh and FakeFez, n = 20, 40, 72, with and without a mask: the same physical ring and two-qubit count as TOQB's `kising_echo build --arm fold:rule` |
+| T1 | the registry made from the notebook's device records equals the notebook's `list_after.json`, byte for byte |
+| T2 | on FakeKingston, FakeMarrakesh and FakeFez, n = 20, 40, 72, with and without a mask: the same physical ring and two-qubit count as the notebook's `kising_echo build --arm fold:rule` |
 | T3 | on FakeFez in simulation (Aer stabilizer, the echo at its Clifford point h = pi/4, a ZZ Pauli error of 0.15 after every CZ on three planted couplers known only to the test): two scans list the two planted couplers that lie on standard rings, the mask hits exactly those couplers, and the usable sites grow (n = 40: 24 -> 40, n = 72: 56 -> 72) |
 | T4 | the sh6 identity (OS plan M3, second form) and the echo, entered through the L6 interface on three fake devices, return every bit without noise |
 | T5 | the frame flip leaves the ideal circuit unchanged (operator equality); the repair rules |
 | T6 | the chain runs through a Target wrapper that lets an error value be compared only with the failed mark and raises on any other quality read; the device record and the compiler's Target hold no quality number |
-| bridge | TOQB's `s2rc_device submit --local` runs a psf-os job folder, and psf-os scores what it writes |
+| bridge | the notebook's `s2rc_device submit --local` runs a psf-os job folder, and psf-os scores what it writes |
 | S1-S6 | sentinels: the user's circuits byte-identical with or without them; CLEAN without noise; a coupler planted after placement is flagged DEAD with a run around it; the finding is gray for that day only and adds nothing to LISTED; the time-model cap stops an over-long job; no map is read |
 | Q1-Q4 | practice problems: each exact answer agrees by two independent methods; full score without noise; with planted two-qubit depolarizing errors the cluster parity and P1's read stabilizers are better on the avoiding ring; no map is read |
 | user2d | P6 as a user circuit lands like P6; a gate off the lattice is refused; the floor keeps the CZs and returns to 0; run2d and the card on a local run; a batch of two circuits in one job with a card per circuit; one bad circuit refuses the batch; `rzz(+-pi/2)` is one CZ with the same unitary |
-| ported | 31 of TOQB's tests (defect_list, safe_loop, qca, kising_echo, echo_tomo) on the ported code |
+| ported | 31 of the notebook's tests (defect_list, safe_loop, qca, kising_echo, echo_tomo) on the ported code |
 
 ## Commands
 
@@ -153,9 +167,11 @@ in the job's record at build time and scored by `psf-os result`.
 
 ## Not yet
 
-A declared self-repair test, the spread from day to day, the Rust core (M8), a resident service. A job is never moved
+A declared self-repair test, the spread from day to day, the Rust core (M8), a resident service; observables on the
+answer card (`psf_os.observables` is not yet used by the entrance); the twin and the special condition for 3D
+circuits. A job is never moved
 to another device ("stay"); a result from another device than the one the job was placed for is refused.
 
-Code ported from TOQB (same rights holder) says so at the top of each file.
+Code ported from psf-os-lab-notebook (formerly TOQB; same rights holder) says so at the top of each file.
 
 AGPL v3. See `LICENSE`.
