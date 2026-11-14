@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+`.zenodo.json` links releases to paper 8 as well (10.5281/zenodo.24136512, 2026-11-11), which also used psf-os.
+
 ## 0.1.1 (2026-11-14)
 
 The same code as 0.1.0. Added `.zenodo.json`, so that each GitHub release is archived on Zenodo with a DOI, with
@@ -8,7 +12,7 @@ TN Holdings as the author and the release linked to papers 6 and 7.
 ## 0.1.0 (2026-11-14)
 
 The first release: the code as used for the declared device tests of 2026-11-01 to 2026-11-13 (records in
-[psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook); papers 6 and 7 of TN Holdings).
+[psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook); papers 6, 7 and 8 of TN Holdings).
 Nothing in it reads a calibration quality number: placement uses the coupling graph and the elements marked as failed.
 
 Rings (L0-L6): device, scan, registry (the defect list), allocate, repair, ring sentinel, job; `psf-os plan`.
