@@ -1,6 +1,7 @@
 # psf-os
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![DOI](https://zenodo.org/badge/1442836966.svg)](https://doi.org/10.5281/zenodo.24211404)
 
 A self-checking layer between a user's circuit and an IBM heavy-hex device, without the calibration map.
 
@@ -9,7 +10,9 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** Release 0.1.1 (2026-11-14; the code of 0.1.0; changes in [`CHANGELOG.md`](CHANGELOG.md)). The experiments behind it, and
+**Status.** Release 0.1.1 (2026-11-14; the code of 0.1.0; changes in [`CHANGELOG.md`](CHANGELOG.md)). Archived on
+Zenodo: every release [10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (the latest), 0.1.1
+[10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
 their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook) (named TOQB until
 2026-11-12; the old links redirect); every device result below was declared (hash and time locked in git) before its
 data existed.
