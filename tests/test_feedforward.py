@@ -20,7 +20,7 @@ def _qc(n=2, nc=2):
 def test_teleport_test_is_accepted():
     for k in (1, 2, 4):
         a = FF.analyse(FF.teleport_test(k))
-        assert a == dict(n=k + 1, clbits=k + 1, mid=k, conditionals=k, cz=k)
+        assert a == dict(n=k + 1, clbits=k + 1, mid=k, conditionals=k, cz=k, cz_in_blocks=0)
         off = FF.strip_conditionals(FF.teleport_test(k))
         assert FF.analyse(off)["conditionals"] == 0
 
@@ -141,3 +141,82 @@ def test_submission_path_offline(tmp_path):
     jid = ibm.submit(Svc(), os.path.join(out, "job"))
     sub = json.load(open(os.path.join(out, "job", "submission.json")))
     assert jid and "twirling off" in sub["options"] and sub["sampler_options"]["dynamical_decoupling.enable"] is False
+
+
+# ---- repeat-until-success (2026-11-16 evening): form "blocks", CY / CRY lowering, the neuron chain
+
+def test_lowering_is_exact():
+    from qiskit.quantum_info import Operator
+    for c, t in ((0, 1), (1, 0)):
+        q = QuantumCircuit(2)
+        q.cy(c, t)
+        assert Operator(q).equiv(Operator(FF.lower(q)))
+        q = QuantumCircuit(2)
+        q.cry(0.73, c, t)
+        assert Operator(q).equiv(Operator(FF.lower(q)))
+    assert {i.operation.name for i in FF.lower(q).data} <= {"ry", "h", "cz"}
+
+
+def test_blocks_form_and_ibm_rules():
+    qc, spec = FF.rus_chain(2, 1.1, m=3)
+    a = FF.analyse(qc, form="blocks")
+    assert a["conditionals"] == 4 and a["n"] == 4 and a["cz_in_blocks"] == 12
+    with pytest.raises(FF.Refused, match="only X or Z"):
+        FF.analyse(qc)                                   # the narrow form still refuses sub-circuits
+    for bad, word in (("measure", "measure"), ("reset", "reset"), ("nest", "inside a conditional")):
+        q = _qc(2, 2)
+        q.measure(0, 0)
+        with q.if_test((q.clbits[0], 1)):
+            if bad == "measure":
+                q.measure(1, 1)
+            elif bad == "reset":
+                q.reset(1)
+            else:
+                with q.if_test((q.clbits[0], 1)):
+                    q.x(1)
+        if bad != "measure":
+            q.measure(1, 1)
+        with pytest.raises(FF.Refused, match=word):
+            FF.analyse(q, form="blocks")
+
+
+def test_rus_exact_and_noiseless_card(tmp_path):
+    for L in (1, 2, 3):
+        for th in (0.8, 1.1):
+            _, sp = FF.rus_chain(L, th)
+            assert abs(sp["exact"] - FF.rus_exact_statevector(L, th)) < 1e-12
+    dev = Dv.fetch_fake("FakeFez")
+    items = []
+    for L in (1, 2):
+        qc, sp = FF.rus_chain(L, 1.1, m=3)
+        items.append((f"rus{L}", qc, sp))
+    out = str(tmp_path / "r")
+    rep = FF.build(dev, items, out, shots=4000, sentinel_spec=dict(kind="echo_clifford", D=24))
+    assert rep["items"]["rus2"]["cz_in_blocks"] == 12 and rep["circuits"] == 2 * 3 + 4
+    FF.run_local(out)
+    cards = FF.cards(out)
+    c1, c2 = cards["rus1"], cards["rus2"]
+    # desk (notebook rus_neuron_desk.txt, 20000 shots): L 1 ff 0.919 (still failed 0.034), post 0.935, off 0.793;
+    # L 2 ff 0.849 (0.064), post 0.851, off 0.634
+    assert abs(c1["ff"]["p1"] - 0.919) < 0.02 and abs(c1["ff"]["still_failed_after_m"] - 0.034) < 0.015
+    assert abs(c1["off"]["p1"] - 0.793) < 0.03 and abs(c2["off"]["p1"] - 0.634) < 0.03
+    assert abs(c2["ff"]["p1"] - 0.849) < 0.03 and abs(c2["post"]["p1"] - 0.851) < 0.04
+    assert c2["post"]["discarded"] > 0 and c2["ff"]["discarded"] == 0 and c2["off"]["discarded"] == 0
+    assert c1["floor"]["all_zero"] == 1.0 and c2["floor"]["all_zero"] == 1.0
+
+
+def test_pre_submit_check_walks_nested_blocks():
+    pytest.importorskip("qiskit_ibm_runtime")
+    from qiskit_ibm_runtime.fake_provider import FakeFez
+    t = FakeFez().target
+    _, failed_c, failed_q = Dv.failed_elements(t)
+    a, b = next(qa for qa in t["cz"] if qa and tuple(sorted(qa)) not in {tuple(sorted(c)) for c in failed_c}
+                and not set(qa) & set(failed_q))
+    far = next(q for q in range(t.num_qubits) if q not in failed_q and (a, q) not in t["cz"] and q != a)
+    qc = QuantumCircuit(QuantumRegister(t.num_qubits, "q"), ClassicalRegister(1, "c"))
+    qc.measure(a, 0)
+    with qc.if_test((qc.clbits[0], 1)):
+        qc.x(b)
+        with qc.if_test((qc.clbits[0], 1)):
+            qc.cz(a, far)                        # two levels down
+    assert any(f"cz({a}, {far}) not supported" in p for p in ibm.problems([qc], t))

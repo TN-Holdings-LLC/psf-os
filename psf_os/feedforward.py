@@ -2,11 +2,16 @@
 user2d: circuits with mid-circuit measurements and conditional Pauli gates applied in real time. user2d is not changed
 and still refuses any gate after a measurement.
 
-Accepted (narrow on purpose; anything else is refused with the reason):
+Accepted (narrow on purpose; anything else is refused with the reason; form "pauli", the default):
   * qubits 0 .. n-1 on a line: two-qubit gates are CZ between neighbours (k, k+1) only;
   * one-qubit gates (h, x, y, z, s, sdg, t, tdg, sx, sxdg, rx, ry, rz, p, id);
   * measurements anywhere, one classical register; each classical bit written once (a definite record per shot);
   * `if_test` blocks on one classical bit already written, value 0 or 1, holding only X or Z on one qubit, no else.
+Form "blocks" (2026-11-16 evening, for repeat-until-success): the blocks may hold a fixed sub-circuit of one-qubit
+gates and neighbour CZ; never a measurement, a reset or another conditional inside a block (IBM's dynamic circuits do
+not run those: "Nested conditionals are not allowed", "Having reset or measurements inside conditionals is not
+supported"; measure after the block, unconditionally, and reset by a conditional X). CY and CRY are accepted and
+lowered to CZ and one-qubit gates at the entrance (`lower`). `rus_chain(L, theta, m)` writes the neuron chain so.
 
 Placement: the n-site chain by rule C (psf_os.chain.place: the coupling graph and the failed marks only, no error
 number), logical qubit k on chain[k]. Compilation: the map-free Target with the control-flow op if_else added (no
@@ -40,6 +45,7 @@ KIND = "feedforward"
 ONE_QUBIT = ("h", "x", "y", "z", "s", "sdg", "t", "tdg", "sx", "sxdg", "rx", "ry", "rz", "p", "id")
 CONDITIONAL = ("x", "z")
 NON_DIAGONAL_COMPILED = ("sx", "x")
+LOCAL_MAX_QUBITS = 24          # run_local: statevector up to this many touched qubits for non-Clifford circuits
 
 
 class Refused(ValueError):
@@ -78,6 +84,67 @@ def teleport_test(k, feed_forward=True):
     return qc
 
 
+def rus_q(theta):
+    """The repeat-until-success neuron's angle: tan q = tan^2 theta (Cao, Guerreschi, Aspuru-Guzik 2017)."""
+    return math.atan(math.tan(theta) ** 2)
+
+
+def _rus_attempt(qc, a, o, theta, ctrl):
+    if ctrl is None:
+        qc.ry(2 * theta, a)
+    else:
+        qc.cry(2 * theta, ctrl, a)
+    qc.cy(a, o)
+    qc.sdg(a)
+    if ctrl is None:
+        qc.ry(-2 * theta, a)
+    else:
+        qc.cry(-2 * theta, ctrl, a)
+
+
+def rus_chain(L, theta, m=3, feed_forward=True):
+    """L repeat-until-success neurons in a row on a line a0, o0, a1, o1, ... (ancilla 2j, output 2j+1; neuron j > 0
+    has its ancilla angle switched on by output j-1), m tries per neuron (notebook notes/feedforward_2026-11-16/
+    rus_neuron_desk.py), written for IBM's dynamic circuits: the conditional blocks hold gates only (undo RY(pi/2) on
+    the output, reset the ancilla by X, the next attempt) and every try's measurement sits after its block,
+    unconditionally (after a success the ancilla is |0> and reads 0 again). One register c: neuron j's tries in
+    c[j m .. j m + m - 1], the last output in c[L m]. Returns (circuit, spec) with the exact value of P(last output 1)
+    when every neuron succeeds, (sin^2 q)^L."""
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+    if L < 1 or m < 1:
+        raise ValueError("L >= 1 and m >= 1")
+    q, c = QuantumRegister(2 * L, "q"), ClassicalRegister(L * m + 1, "c")
+    qc = QuantumCircuit(q, c)
+    for j in range(L):
+        a, o, ctrl = 2 * j, 2 * j + 1, (None if j == 0 else 2 * j - 1)
+        _rus_attempt(qc, a, o, theta, ctrl)
+        qc.measure(a, j * m)
+        for r in range(1, m):
+            if feed_forward:
+                with qc.if_test((c[j * m + r - 1], 1)):
+                    qc.ry(math.pi / 2, o)
+                    qc.x(a)
+                    _rus_attempt(qc, a, o, theta, ctrl)
+            qc.measure(a, j * m + r)
+    qc.measure(2 * L - 1, L * m)
+    spec = dict(kind="rus", L=L, theta=theta, m=m, out_bit=L * m,
+                tries=[list(range(j * m, j * m + m)) for j in range(L)], exact=math.sin(rus_q(theta)) ** (2 * L),
+                form="blocks")
+    return qc, spec
+
+
+def rus_exact_statevector(L, theta):
+    """P(last output 1) of the ideal chain (every neuron succeeds) by statevector: output 0 turned by RY(2q), output j
+    by a controlled RY(2q) from output j-1."""
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import Statevector
+    qc = QuantumCircuit(L)
+    qc.ry(2 * rus_q(theta), 0)
+    for j in range(1, L):
+        qc.cry(2 * rus_q(theta), j - 1, j)
+    return float(Statevector(qc).probabilities([L - 1])[1])
+
+
 # ------------------------------------------------------------------------------------------------ analysis
 
 def _cond_bit(op, qc):
@@ -93,8 +160,42 @@ def _cond_bit(op, qc):
     return qc.find_bit(bit).index, int(val)
 
 
-def analyse(qc):
-    """dict(n, clbits, mid, conditionals, cz) or Refused. Checks the accepted form (module docstring)."""
+FORMS = ("pauli", "blocks")
+IBM_RULES = ("IBM, Execute dynamic circuits (2026): 'Nested conditionals are not allowed'; 'Having reset or "
+             "measurements inside conditionals is not supported'")
+
+
+def _check_block(body, qmap):
+    """The 'blocks' form: one-qubit gates and neighbour CZ only (no measurement, reset or nested conditional)."""
+    cz, gates = 0, 0
+    for bi in body.data:
+        name = bi.operation.name
+        qs = [qmap[body.find_bit(x).index] for x in bi.qubits]
+        if name == "barrier":
+            continue
+        if name == "if_else":
+            raise Refused(f"a conditional inside a conditional is not run on IBM devices ({IBM_RULES})")
+        if name in ("measure", "reset"):
+            raise Refused(f"'{name}' inside a conditional is not run on IBM devices ({IBM_RULES}); measure after "
+                          "the block, unconditionally")
+        if len(qs) == 1 and name in ONE_QUBIT:
+            gates += 1
+        elif len(qs) == 2 and name == "cz" and abs(qs[0] - qs[1]) == 1:
+            cz += 1
+        else:
+            raise Refused(f"a conditional block holds one-qubit gates and neighbour CZ only (got '{name}' on {qs})")
+    return cz, gates
+
+
+def analyse(qc, form="pauli"):
+    """dict(n, clbits, mid, conditionals, cz, cz_in_blocks) or Refused. Checks the accepted form (module docstring):
+    form "pauli" (conditional blocks hold one X or Z) or "blocks" (fixed sub-circuits of one-qubit gates and
+    neighbour CZ; no measurement, reset or nesting inside, as IBM's dynamic circuits require). CY and CRY are lowered
+    to CZ and one-qubit gates first (`lower`)."""
+    if form not in FORMS:
+        raise Refused(f"form {form!r} is not one of {FORMS}")
+    qc = lower(qc)
+    cz_blocks = 0
     if len(qc.cregs) != 1:
         raise Refused(f"one classical register holding every measured bit (got {len(qc.cregs)})")
     if qc.num_clbits != len(qc.cregs[0]):
@@ -120,9 +221,14 @@ def analyse(qc):
             if len(op.blocks) != 1 or op.blocks[0] is None:
                 raise Refused("a conditional has no else branch here")
             body = op.blocks[0]
-            for bi in body.data:
-                if bi.operation.name not in CONDITIONAL or len(bi.qubits) != 1:
-                    raise Refused(f"a conditional block holds only X or Z on one qubit (got '{bi.operation.name}')")
+            if form == "pauli":
+                for bi in body.data:
+                    if bi.operation.name not in CONDITIONAL or len(bi.qubits) != 1:
+                        raise Refused(f"a conditional block holds only X or Z on one qubit (got "
+                                      f"'{bi.operation.name}'; form 'blocks' takes fixed sub-circuits)")
+            else:
+                c, _ = _check_block(body, {j: qs[j] for j in range(len(qs))})
+                cz_blocks += c
             conds += 1
             continue
         if getattr(op, "condition", None) is not None:
@@ -146,7 +252,31 @@ def analyse(qc):
     ops = [ins.operation.name for ins in qc.data]
     last_op = max((i for i, nm in enumerate(ops) if nm not in ("measure", "barrier")), default=-1)
     mids = sum(1 for i, nm in enumerate(ops) if nm == "measure" and i < last_op)   # an operation follows it
-    return dict(n=qc.num_qubits, clbits=qc.num_clbits, mid=mids, conditionals=conds, cz=cz)
+    return dict(n=qc.num_qubits, clbits=qc.num_clbits, mid=mids, conditionals=conds, cz=cz, cz_in_blocks=cz_blocks)
+
+
+def lower(qc):
+    """CY and CRY written as CZ and one-qubit gates, also inside conditional blocks (exact identities, checked in the
+    tests): CY(c, t) = Sdg(t) H(t) CZ(c, t) H(t) S(t); CRY(theta)(c, t) = RY(theta/2)(t) CX RY(-theta/2)(t) CX with
+    each CX(c, t) = H(t) CZ(c, t) H(t). Everything else is kept."""
+    out = qc.copy_empty_like()
+    for ins in qc.data:
+        op, qs = ins.operation, ins.qubits
+        if op.name == "if_else":
+            out.append(op.replace_blocks([None if b is None else lower(b) for b in op.blocks]), qs, ins.clbits)
+        elif op.name == "cy":
+            c, t = qs
+            out.sdg(t); out.h(t); out.cz(c, t); out.h(t); out.s(t)          # noqa: E702
+        elif op.name == "cry":
+            c, t = qs
+            th = op.params[0]
+            out.ry(th / 2, t)
+            out.h(t); out.cz(c, t); out.h(t)                                 # noqa: E702
+            out.ry(-th / 2, t)
+            out.h(t); out.cz(c, t); out.h(t)                                 # noqa: E702
+        else:
+            out.append(op, qs, ins.clbits)
+    return out
 
 
 def strip_conditionals(qc):
@@ -262,8 +392,10 @@ def _sentinel(dev, runs, shots, spec, ring=40):
 
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
-    """items: [(tag, QuantumCircuit, dict(success={clbit: value}, bound=float | None))]. One job: per item its ff, off
-    and floor arms, one ring sentinel. Nothing is written if any item is refused. Returns the build report (also
+    """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
+    test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
+    "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
+    the "post" view, no extra circuit), one ring sentinel. Nothing is written if any item is refused. Returns the build report (also
     out/build.json)."""
     from psf_os import job as J
     from psf_os import user2d as U
@@ -275,13 +407,21 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
     comp = Compiler(dev)
     prepared = []
     for tag, qc, spec in items:
+        spec = dict(spec or {})
         try:
-            a = analyse(qc)
+            a = analyse(qc, form=spec.get("form", "pauli"))
         except Refused as e:
             raise Refused(f"{tag}: {e}") from None
-        succ = {int(b): int(v) for b, v in (spec or {}).get("success", {}).items()}
-        if not succ or any(b >= a["clbits"] or v not in (0, 1) for b, v in succ.items()):
-            raise Refused(f"{tag}: success must name classical bits of the circuit and their values 0 / 1")
+        qc = lower(qc)
+        if spec.get("kind") == "rus":
+            bits = [b for t in spec["tries"] for b in t] + [spec["out_bit"]]
+            if any(not 0 <= b < a["clbits"] for b in bits) or len(set(bits)) != len(bits):
+                raise Refused(f"{tag}: the rus spec's bits do not fit the circuit")
+            succ = {}
+        else:
+            succ = {int(b): int(v) for b, v in spec.get("success", {}).items()}
+            if not succ or any(b >= a["clbits"] or v not in (0, 1) for b, v in succ.items()):
+                raise Refused(f"{tag}: success must name classical bits of the circuit and their values 0 / 1")
         pl = place(dev, a["n"])
         chain = pl["chain"]
         arms = {}
@@ -293,11 +433,12 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
             raise Refused(f"{tag}: acceptance failed: {chk}")
         if not any(n == "if_else" for n, _ in walk(arms["ff"])) and a["conditionals"]:
             raise Refused(f"{tag}: the compiler removed the conditionals")
-        prepared.append((tag, a, succ, (spec or {}).get("bound"), pl, arms, chk))
+        prepared.append((tag, a, succ, spec, pl, arms, chk))
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
     rep_items = {}
-    for tag, a, succ, bound, pl, arms, chk in prepared:
+    for tag, a, succ, spec, pl, arms, chk in prepared:
+        bound = spec.get("bound")
         chain = pl["chain"]
         labels = list(range(a["n"]))
         mapping = {k: chain[k] for k in labels}
@@ -305,6 +446,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
         extra = dict(tag=tag, chain=chain, chain_rule=dict(rule=pl["rule"], start=pl["start"]), success=
                      {str(b): v for b, v in succ.items()}, bound=bound, clbits=a["clbits"], mid=a["mid"],
                      conditionals=a["conditionals"], logical_cz=a["cz"])
+        if spec.get("kind") == "rus":
+            extra["rus"] = {k: spec[k] for k in ("L", "theta", "m", "out_bit", "tries", "exact")}
+            extra["logical_cz_in_blocks"] = a["cz_in_blocks"]
         for arm, kind in (("ff", KIND), ("off", KIND + "_off"), ("floor", KIND + "_floor")):
             c = arms[arm]
             U._record(dev, runs, f"ff_{tag}" + ("" if arm == "ff" else f"_{arm}"), "user" if arm == "ff" else arm,
@@ -313,7 +457,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
         c = arms["ff"]
         rep_items[tag] = dict(n=a["n"], chain=chain, cz=cz_count(c), off_cz=cz_count(arms["off"]),
                               floor_cz=cz_count(arms["floor"]), depth=c.depth(),
-                              mid=a["mid"], conditionals=a["conditionals"], success=succ, bound=bound)
+                              mid=a["mid"], conditionals=a["conditionals"], success=succ, bound=bound,
+                              **({"rus": extra["rus"], "cz_in_blocks": cz_count(c) - cz_count(arms["off"])}
+                                 if "rus" in extra else {}))
     _sentinel(dev, runs, shots, sentinel_spec)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
     rep = dict(device=dev.name, kind=KIND, items=rep_items, circuits=len(man["pubs"]),
@@ -327,8 +473,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
 # ------------------------------------------------------------------------------------------------ local run, card
 
 def run_local(out, seed=20261116):
-    """Noiseless Aer on the job's circuits (compacted to their touched qubits; statevector up to 24, else matrix product
-    state; control flow supported); raw_counts.json and
+    """Noiseless Aer on the job's circuits (compacted to their touched qubits; Clifford circuits by the stabilizer
+    method, others by statevector up to LOCAL_MAX_QUBITS touched qubits, else refused at once; control flow
+    supported); raw_counts.json and
     submission.json as a device run writes them (local=True). For dry runs only: refused if a submission exists."""
     from qiskit import qpy
     from qiskit_aer import AerSimulator
@@ -346,7 +493,11 @@ def run_local(out, seed=20261116):
         if cl is not None:
             cc, meth = cl, "stabilizer"
         else:
-            meth = "statevector" if cc.num_qubits <= 24 else "matrix_product_state"
+            if cc.num_qubits > LOCAL_MAX_QUBITS:
+                raise Refused(f"circuit {k} ({c.name}) is not Clifford and touches {cc.num_qubits} qubits: too slow to "
+                              "simulate here (the ring sentinel at h = 0.6 on 40 qubits did not finish in 18 min). "
+                              "For a dry run build the job with sentinel_spec=dict(kind='echo_clifford', D=24)")
+            meth = "statevector"
         res = AerSimulator(method=meth).run(cc, shots=man["shots"], seed_simulator=seed + k).result()
         rows.append(dict(pub=k, counts={key.replace(" ", ""): v for key, v in res.get_counts(0).items()}))
     from psf_os.ibm import _stamp
@@ -393,6 +544,37 @@ def best_fixed_rule(counts, n, final_bit, mid_bits):
     return sum(max(v) for v in by.values()) / sum(counts.values())
 
 
+def _p1(counts, n, bit, keep=None):
+    tot = sum(counts.values())
+    kept = {k: v for k, v in counts.items() if keep is None or keep(_bits(k, n))}
+    nk = sum(kept.values())
+    ones = sum(v for k, v in kept.items() if _bits(k, n)[bit] == 1)
+    p = ones / nk if nk else float("nan")
+    return dict(shots=tot, counted=nk, discarded=tot - nk, kept_share=nk / tot, p1=p,
+                two_se=2 * math.sqrt(p * (1 - p) / nk) if nk else float("nan"))
+
+
+def rus_card(tag, rec, ff_counts, off_counts, floor_counts, sentinel_status):
+    """The repeat-until-success card: P(last output 1) against the exact value for ff (every shot counted), off
+    (no control, every shot counted) and post (the off arm's shots whose first try succeeded for every neuron:
+    post-selected, shots discarded, never a verdict); ff's share still failing after m tries; the floor."""
+    rus, n = rec["rus"], rec["clbits"]
+    out, tries, ex = rus["out_bit"], rus["tries"], rus["exact"]
+    ff = _p1(ff_counts, n, out)
+    still = sum(v for k, v in ff_counts.items() if any(all(_bits(k, n)[b] == 1 for b in t) for t in tries))
+    ff["still_failed_after_m"] = still / sum(ff_counts.values())
+    off = _p1(off_counts, n, out)
+    post = _p1(off_counts, n, out, keep=lambda b: all(b[t[0]] == 0 for t in tries))
+    for d in (ff, off, post):
+        d["minus_exact"] = d["p1"] - ex
+        d["in_se"] = d["minus_exact"] / (d["two_se"] / 2) if d["two_se"] and d["two_se"] > 0 else None
+    tot = sum(floor_counts.values())
+    zero = sum(v for k, v in floor_counts.items() if set(_bits(k, n)) == {0}) / tot
+    ones = [sum(v for k, v in floor_counts.items() if _bits(k, n)[i] == 1) / tot for i in range(n)]
+    return dict(tag=tag, chain=rec["chain"], L=rus["L"], theta=rus["theta"], m=rus["m"], exact=ex, ff=ff, off=off,
+                post=post, floor=dict(all_zero=zero, ones_per_bit=ones), sentinel=sentinel_status)
+
+
 def cards(out):
     """{tag: card} of a finished feed-forward job (module docstring); the sentinel's status beside."""
     from psf_os import job as J
@@ -412,6 +594,9 @@ def cards(out):
     for tag, arms in got.items():
         rec, cnt = arms["ff"]
         n = rec["clbits"]
+        if "rus" in rec:
+            res[tag] = rus_card(tag, rec, cnt, arms["off"][1], arms["floor"][1], sent)
+            continue
         succ = {int(b): v for b, v in rec["success"].items()}
         ff = success_share(cnt, n, succ)
         off = success_share(arms["off"][1], n, succ)
