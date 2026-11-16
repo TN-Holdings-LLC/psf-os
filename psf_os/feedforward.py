@@ -422,10 +422,24 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
             succ = {int(b): int(v) for b, v in spec.get("success", {}).items()}
             if not succ or any(b >= a["clbits"] or v not in (0, 1) for b, v in succ.items()):
                 raise Refused(f"{tag}: success must name classical bits of the circuit and their values 0 / 1")
+        off = spec.get("off_circuit")
+        if off is not None:
+            # an explicit off arm (2026-11-17): for a circuit without conditionals (e.g. repeat-until-success written
+            # coherently) the comparison without control is a different circuit (one try), given by the caller
+            try:
+                ao = analyse(off, form=spec.get("form", "pauli"))
+            except Refused as e:
+                raise Refused(f"{tag} (off arm): {e}") from None
+            if (ao["n"], ao["clbits"]) != (a["n"], a["clbits"]):
+                raise Refused(f"{tag}: the off arm has {ao['n']} qubits / {ao['clbits']} bits, the circuit "
+                              f"{a['n']} / {a['clbits']}")
+            off = lower(off)
+        else:
+            off = strip_conditionals(qc)
         pl = place(dev, a["n"])
         chain = pl["chain"]
         arms = {}
-        for arm, logical in (("ff", qc), ("off", strip_conditionals(qc))):
+        for arm, logical in (("ff", qc), ("off", off)):
             arms[arm] = comp.run(on_device(logical, chain, dev.num_qubits))
         arms["floor"] = floor_of(arms["ff"])
         chk = {arm: checks(dev, c, chain) for arm, c in arms.items()}
@@ -446,6 +460,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
         extra = dict(tag=tag, chain=chain, chain_rule=dict(rule=pl["rule"], start=pl["start"]), success=
                      {str(b): v for b, v in succ.items()}, bound=bound, clbits=a["clbits"], mid=a["mid"],
                      conditionals=a["conditionals"], logical_cz=a["cz"])
+        if spec.get("off_circuit") is not None:
+            extra["off_explicit"] = True
         if spec.get("kind") == "rus":
             extra["rus"] = {k: spec[k] for k in ("L", "theta", "m", "out_bit", "tries", "exact")}
             extra["logical_cz_in_blocks"] = a["cz_in_blocks"]

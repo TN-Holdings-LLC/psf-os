@@ -220,3 +220,27 @@ def test_pre_submit_check_walks_nested_blocks():
         with qc.if_test((qc.clbits[0], 1)):
             qc.cz(a, far)                        # two levels down
     assert any(f"cz({a}, {far}) not supported" in p for p in ibm.problems([qc], t))
+
+
+def test_explicit_off_arm(tmp_path):
+    """A circuit without conditionals (repeat-until-success written coherently) with its own off arm (one try)."""
+    from qiskit import transpile
+    dev = Dv.fetch_fake("FakeFez")
+
+    def line(tries):
+        qc = _qc(3, 3)
+        qc.ry(2.2, 0)
+        qc.cz(0, 1)
+        if tries > 1:
+            qc.cx(1, 2)
+            qc.cx(2, 1)
+        qc.measure([0, 1, 2], [0, 1, 2])
+        return transpile(qc, basis_gates=["cz", "rz", "sx", "x", "measure"], optimization_level=0)
+    out = str(tmp_path / "o")
+    rep = FF.build(dev, [("c", line(2), dict(success={2: 0}, off_circuit=line(1)))], out, shots=200,
+                   sentinel_spec=dict(kind="echo_clifford", D=24))
+    assert rep["items"]["c"]["cz"] == 3 and rep["items"]["c"]["off_cz"] == 1
+    rec = json.load(open(os.path.join(out, "runs", "ff_c_off.json")))
+    assert rec["off_explicit"] is True
+    with pytest.raises(FF.Refused, match="off arm"):
+        FF.build(dev, [("d", line(2), dict(success={2: 0}, off_circuit=_qc(2, 2)))], str(tmp_path / "p"))
