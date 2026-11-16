@@ -70,13 +70,21 @@ def problems(circuits, target):
         if name not in keys:
             keys[name] = set(iter(target[name]))
         return None in keys[name] or qa in keys[name]
+    def walk(c, qmap):
+        # every instruction, also inside control-flow blocks (feed-forward jobs, 2026-11-16); a circuit without
+        # control flow gives exactly the instructions it gave before
+        for inst in c.data:
+            qa = tuple(qmap[c.find_bit(q).index] for q in inst.qubits)
+            yield inst.operation.name, qa
+            for b in getattr(inst.operation, "blocks", ()) or ():
+                if b is not None:
+                    yield from walk(b, {j: qa[j] for j in range(len(qa))})
+
     out = []
     for i, qc in enumerate(circuits):
-        for inst in qc.data:
-            name = inst.operation.name
+        for name, qa in walk(qc, {j: j for j in range(qc.num_qubits)}):
             if name == "barrier":
                 continue
-            qa = tuple(qc.find_bit(q).index for q in inst.qubits)
             if not supported(name, qa):
                 out.append(f"circuit {i}: {name}{qa} not supported")
             elif len(qa) == 2 and tuple(sorted(qa)) in fc:
