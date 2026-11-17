@@ -6,7 +6,10 @@ Accepted (narrow on purpose; anything else is refused with the reason; form "pau
   * qubits 0 .. n-1 on a line: two-qubit gates are CZ between neighbours (k, k+1) only;
   * one-qubit gates (h, x, y, z, s, sdg, t, tdg, sx, sxdg, rx, ry, rz, p, id);
   * measurements anywhere, one classical register; each classical bit written once (a definite record per shot);
-  * `if_test` blocks on one classical bit already written, value 0 or 1, holding only X or Z on one qubit, no else.
+  * `if_test` blocks on one classical bit already written, value 0 or 1, holding only X or Z on one qubit, no else;
+  * `delay` on one qubit at the top level (2026-11-17: to hold a schedule, e.g. notes/next_2026-11-17/pin_delay.py in
+    the notebook); kept through placement, compilation, the off and floor arms, and the identity noiselessly; refused
+    inside a conditional block.
 Form "blocks" (2026-11-16 evening, for repeat-until-success): the blocks may hold a fixed sub-circuit of one-qubit
 gates and neighbour CZ; never a measurement, a reset or another conditional inside a block (IBM's dynamic circuits do
 not run those: "Nested conditionals are not allowed", "Having reset or measurements inside conditionals is not
@@ -161,6 +164,8 @@ def _cond_bit(op, qc):
 
 
 FORMS = ("pauli", "blocks")
+DELAY_IN_BLOCK = ("a delay inside a conditional block is not read (its timing would depend on the branch); put "
+                  "delays at the top level only")
 IBM_RULES = ("IBM, Execute dynamic circuits (2026): 'Nested conditionals are not allowed'; 'Having reset or "
              "measurements inside conditionals is not supported'")
 
@@ -175,6 +180,8 @@ def _check_block(body, qmap):
             continue
         if name == "if_else":
             raise Refused(f"a conditional inside a conditional is not run on IBM devices ({IBM_RULES})")
+        if name == "delay":
+            raise Refused(DELAY_IN_BLOCK)
         if name in ("measure", "reset"):
             raise Refused(f"'{name}' inside a conditional is not run on IBM devices ({IBM_RULES}); measure after "
                           "the block, unconditionally")
@@ -223,6 +230,8 @@ def analyse(qc, form="pauli"):
             body = op.blocks[0]
             if form == "pauli":
                 for bi in body.data:
+                    if bi.operation.name == "delay":
+                        raise Refused(DELAY_IN_BLOCK)
                     if bi.operation.name not in CONDITIONAL or len(bi.qubits) != 1:
                         raise Refused(f"a conditional block holds only X or Z on one qubit (got "
                                       f"'{bi.operation.name}'; form 'blocks' takes fixed sub-circuits)")
@@ -233,6 +242,11 @@ def analyse(qc, form="pauli"):
             continue
         if getattr(op, "condition", None) is not None:
             raise Refused("conditions are written as if_test blocks")
+        if name == "delay":
+            # a top-level delay holds a schedule; it is the identity noiselessly and is not counted as a gate
+            if len(qs) != 1:
+                raise Refused("a delay acts on one qubit")
+            continue
         if name in ("reset", "initialize", "while_loop", "for_loop", "switch_case", "store", "box"):
             raise Refused(f"'{name}' is not read by the feed-forward job")
         if len(qs) == 1:
@@ -250,7 +264,7 @@ def analyse(qc, form="pauli"):
     if len(written) != qc.num_clbits:
         raise Refused(f"{qc.num_clbits - len(written)} classical bits are never written")
     ops = [ins.operation.name for ins in qc.data]
-    last_op = max((i for i, nm in enumerate(ops) if nm not in ("measure", "barrier")), default=-1)
+    last_op = max((i for i, nm in enumerate(ops) if nm not in ("measure", "barrier", "delay")), default=-1)
     mids = sum(1 for i, nm in enumerate(ops) if nm == "measure" and i < last_op)   # an operation follows it
     return dict(n=qc.num_qubits, clbits=qc.num_clbits, mid=mids, conditionals=conds, cz=cz, cz_in_blocks=cz_blocks)
 

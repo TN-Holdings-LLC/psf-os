@@ -244,3 +244,78 @@ def test_explicit_off_arm(tmp_path):
     assert rec["off_explicit"] is True
     with pytest.raises(FF.Refused, match="off arm"):
         FF.build(dev, [("d", line(2), dict(success={2: 0}, off_circuit=_qc(2, 2)))], str(tmp_path / "p"))
+
+
+# ---- top-level delays (2026-11-17): a delay holds a schedule; refused inside a conditional block
+
+def _with_delays(k=2):
+    """The teleport test with top-level delays on every qubit before each conditional and before the last
+    measurement (dt units, multiples of 16)."""
+    src = FF.teleport_test(k)
+    out = src.copy_empty_like()
+    for ins in src.data:
+        if ins.operation.name in ("if_else",) or (ins.operation.name == "measure" and ins is src.data[-1]):
+            for q in range(src.num_qubits):
+                out.delay(160, q, unit="dt")
+        out.append(ins.operation, ins.qubits, ins.clbits)
+    return src, out
+
+
+def test_top_level_delay_accepted_and_kept(tmp_path):
+    from qiskit import qpy
+    dev = Dv.fetch_fake("FakeMarrakesh")
+    src, qc = _with_delays(2)
+    assert sum(1 for i in qc.data if i.operation.name == "delay") > 0
+    assert FF.analyse(qc) == FF.analyse(src)                   # a delay is not a gate: same counts
+    out = str(tmp_path / "d")
+    FF.build(dev, [("tp2", qc, dict(success={2: 0}, bound=0.75))], out, shots=400,
+             sentinel_spec=dict(kind="echo_clifford", D=24))
+    circs = qpy.load(open(os.path.join(out, "job", "circuits.qpy"), "rb"))
+    n_in = sum(1 for i in qc.data if i.operation.name == "delay")
+    kept = [sum(1 for n, _ in FF.walk(c) if n == "delay") for c in circs]
+    assert kept.count(n_in) == 3                                   # ff, off and floor keep every delay
+    # the pre-submit check against an IBM target accepts top-level delays
+    pytest.importorskip("qiskit_ibm_runtime")
+    from qiskit_ibm_runtime.fake_provider import FakeMarrakesh
+    assert ibm.problems([c for c, k in zip(circs, kept) if k == n_in], FakeMarrakesh().target) == []
+    # noiselessly the delays change nothing: the same answer card as without them
+    out0 = str(tmp_path / "n")
+    FF.build(dev, [("tp2", src, dict(success={2: 0}, bound=0.75))], out0, shots=400,
+             sentinel_spec=dict(kind="echo_clifford", D=24))
+    FF.run_local(out)
+    FF.run_local(out0)
+    c1, c0 = FF.cards(out)["tp2"], FF.cards(out0)["tp2"]
+    assert c1["ff"]["share"] == c0["ff"]["share"] == 1.0
+    assert c1["floor"]["all_zero"] == c0["floor"]["all_zero"] == 1.0
+
+
+def test_delay_exact_distribution_unchanged():
+    from qiskit.quantum_info import Statevector
+    qc = _qc(2, 2)
+    qc.h(0)
+    qc.delay(320, 0, unit="dt")
+    qc.cz(0, 1)
+    qc.delay(48, 1, unit="dt")
+    qc.h(1)
+    ref = _qc(2, 2)
+    ref.h(0)
+    ref.cz(0, 1)
+    ref.h(1)
+    qc.measure([0, 1], [0, 1])
+    FF.analyse(qc)                                                 # accepted
+    a = Statevector(qc.remove_final_measurements(inplace=False)).probabilities_dict()
+    b = Statevector(ref).probabilities_dict()
+    assert a.keys() == b.keys() and all(abs(a[k] - b[k]) < 1e-12 for k in a)
+
+
+def test_delay_inside_block_refused():
+    for form in ("pauli", "blocks"):
+        qc = _qc(2, 2)
+        qc.h(0)
+        qc.measure(0, 0)
+        with qc.if_test((qc.clbits[0], 1)):
+            qc.delay(160, 1, unit="dt")
+            qc.x(1)
+        qc.measure(1, 1)
+        with pytest.raises(FF.Refused, match="delay inside a conditional block"):
+            FF.analyse(qc, form=form)
