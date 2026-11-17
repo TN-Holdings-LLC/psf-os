@@ -319,3 +319,99 @@ def test_delay_inside_block_refused():
         qc.measure(1, 1)
         with pytest.raises(FF.Refused, match="delay inside a conditional block"):
             FF.analyse(qc, form=form)
+
+
+# ---- 2026-11-17: placement given from outside, and bundles (the packing test)
+
+def test_given_chain_accepted_and_refused(tmp_path):
+    dev = Dv.fetch_fake("FakeFez")
+    ch = FF.place(dev, 3)["chain"]
+    other = [q + 1 for q in ch] if all(dev.qubit_ok(q + 1) for q in ch) else ch
+    rep = FF.build(dev, [("tp2", FF.teleport_test(2), dict(success={2: 0}))], str(tmp_path / "g"),
+                   sentinel_spec=dict(kind="echo_clifford", D=24), chains={"tp2": other})
+    assert rep["items"]["tp2"]["chain"] == other
+    rec = json.load(open(os.path.join(str(tmp_path / "g"), "runs", "ff_tp2.json")))
+    assert rec["chain_rule"]["rule"] == "given"
+    bad = [ch[0], ch[2], ch[1]]                                   # not joined in this order
+    with pytest.raises(FF.Refused, match="working couplers"):
+        FF.build(dev, [("tp2", FF.teleport_test(2), dict(success={2: 0}))], str(tmp_path / "h"),
+                 chains={"tp2": bad})
+    with pytest.raises(FF.Refused, match="has 2 qubits"):
+        FF.given_chain(dev, ch[:2], 3)
+    with pytest.raises(FF.Refused, match="unknown items"):
+        FF.build(dev, [("tp2", FF.teleport_test(2), dict(success={2: 0}))], str(tmp_path / "i"), chains={"x": ch})
+
+
+def test_bundle_two_copies_give_two_single_cards(tmp_path):
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(1, 1.1, m=3)
+    items = [("tpa", FF.teleport_test(2), dict(success={2: 0}, bound=0.75)),
+             ("tpb", FF.teleport_test(2), dict(success={2: 0}, bound=0.75)),
+             ("rusa", qc, sp), ("rusb", qc, sp)]
+    out = str(tmp_path / "b")
+    rep = FF.build_bundle(dev, items, out, shots=4000, sentinel_spec=dict(kind="echo_clifford", D=24))
+    assert rep["circuits"] == 3 + 4
+    segs = [set(rep["items"][t]["chain"]) for t in ("tpa", "tpb", "rusa", "rusb")]
+    assert all(not (a & b) for i, a in enumerate(segs) for b in segs[i + 1:])
+    single = str(tmp_path / "s")
+    FF.build(dev, [("rus1", qc, sp)], single, shots=4000, sentinel_spec=dict(kind="echo_clifford", D=24),
+             chains={"rus1": rep["items"]["rusa"]["chain"]})
+    FF.run_local(out)
+    FF.run_local(single)
+    cards, cs = FF.cards(out), FF.cards(single)
+    assert set(cards) == {"tpa", "tpb", "rusa", "rusb"}
+    for t in ("tpa", "tpb"):                                       # noiseless: deterministic success, floor all zero
+        assert cards[t]["ff"]["share"] == 1.0 and cards[t]["ff"]["counted"] == 4000
+        assert cards[t]["floor"]["all_zero"] == 1.0 and abs(cards[t]["off"]["share"] - 0.5) < 0.05
+    for t in ("rusa", "rusb"):                                     # the same distribution as the item alone
+        for arm in ("ff", "off"):
+            a, b = cards[t][arm], cs["rus1"][arm]
+            se = (a["p1"] * (1 - a["p1"]) / a["counted"] + b["p1"] * (1 - b["p1"]) / b["counted"]) ** 0.5
+            assert abs(a["p1"] - b["p1"]) < 4 * se
+        assert cards[t]["floor"]["all_zero"] == 1.0 and cards[t]["exact"] == cs["rus1"]["exact"]
+
+
+def test_bundle_refuses_an_instruction_across_items():
+    qc = _qc(4, 4)
+    qc.h(0)
+    qc.cz(1, 2)                                                    # joins item 0 (qubits 0, 1) and item 1 (2, 3)
+    qc.measure(range(4), range(4))
+    with pytest.raises(FF.Refused, match="spans sub-items"):
+        FF.bundle_acceptance({"ff": qc}, [{0, 1}, {2, 3}], [{0, 1}, {2, 3}])
+    qc = _qc(4, 4)
+    qc.measure(0, 0)
+    with qc.if_test((qc.clbits[0], 1)):                            # item 1's qubit conditioned on item 0's bit
+        qc.x(2)
+    with pytest.raises(FF.Refused, match="spans sub-items"):
+        FF.bundle_acceptance({"ff": qc}, [{0, 1}, {2, 3}], [{0, 1}, {2, 3}])
+    qc = _qc(4, 4)
+    qc.barrier([1, 2])
+    with pytest.raises(FF.Refused, match="spans sub-items"):
+        FF.bundle_acceptance({"ff": qc}, [{0, 1}, {2, 3}], [{0, 1}, {2, 3}])
+
+
+def test_bundle_time_model_counts_three_arms_and_the_sentinel(tmp_path):
+    dev = Dv.fetch_fake("FakeFez")
+    reps = []
+    for n in (2, 5):
+        items = [(f"tp{j}", FF.teleport_test(1), dict(success={1: 0})) for j in range(n)]
+        reps.append(FF.build_bundle(dev, items, str(tmp_path / f"t{n}"), sentinel_spec=dict(kind="echo_clifford", D=24)))
+    assert reps[0]["circuits"] == reps[1]["circuits"] == 3 + 4
+    assert reps[0]["qpu_seconds_model"] == reps[1]["qpu_seconds_model"]
+
+
+def test_run_local_splits_a_large_bundle_into_independent_parts(tmp_path):
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(1, 1.1, m=3)
+    items = [(f"r{j}", qc, sp) for j in range(9)]                 # 9 x 2 qubits + gaps > LOCAL_MAX_QUBITS
+    out = str(tmp_path / "big")
+    rep = FF.build_bundle(dev, items, out, shots=2000, sentinel_spec=dict(kind="echo_clifford", D=24))
+    assert len(rep["chain"]) > FF.LOCAL_MAX_QUBITS
+    import qiskit.qpy as qpy
+    ff = qpy.load(open(os.path.join(out, "job", "circuits.qpy"), "rb"))[0]
+    assert len(FF.components(ff)) == 9
+    FF.run_local(out)
+    cards = FF.cards(out)
+    for j in range(9):                                             # desk value of L 1, m 3: ff 0.919
+        c = cards[f"r{j}"]
+        assert abs(c["ff"]["p1"] - 0.919) < 0.03 and c["floor"]["all_zero"] == 1.0
