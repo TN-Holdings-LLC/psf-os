@@ -918,7 +918,7 @@ CONDITIONAL_NEIGHBOURS_WHY = (
 
 
 def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None,
-                 allow_conditional_neighbours=False):
+                 allow_conditional_neighbours=False, gap=BUNDLE_GAP, bit_order=None):
     """items: [(sub_tag, QuantumCircuit, spec)] as for build. One job of one bundle: the sub-items placed by
     bundle_place, every sub-item on its segment and its bits at an offset of one classical register; ff = the
     sub-items' circuits, off = their off arms (explicit or the conditionals removed), floor = floor_of(ff), one ring
@@ -929,7 +929,11 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     v0.2 prototype (2026-11-18): refused when two or more sub-items hold conditional operations
     (CONDITIONAL_NEIGHBOURS_WHY), unless allow_conditional_neighbours=True (tests of the loss itself, such as P-B), which
     the manifest records; several conditionals inside one sub-item (e.g. a table-lookup decoder) are not a neighbour and
-    are only counted (manifest: conditionals_per_item)."""
+    are only counted (manifest: conditionals_per_item).
+    Interference tests (2026-11-18 evening): gap = the sites skipped between items (bundle_place; default 1, as
+    before); bit_order = the sub-item tags in the order their bits take in the register (default: the items' order, as
+    before), so that placement (items' order on the chain) and bit order can be varied apart; both recorded in the
+    manifest when not at their defaults."""
     from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
     from psf_os import job as J
     from psf_os import user2d as U
@@ -938,6 +942,10 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     tags = [t for t, _, _ in items]
     if len(items) < 2 or len(set(tags)) != len(tags) or not all(U._tag_ok(t) for t in tags + [tag]):
         raise Refused(f"a bundle holds two or more distinct sub-items with plain tags: {tags}")
+    if bit_order is not None and sorted(bit_order) != sorted(tags):
+        raise Refused(f"{tag}: bit_order must name every sub-item once: {bit_order} against {tags}")
+    if not isinstance(gap, int) or gap < 1:
+        raise Refused(f"{tag}: gap must be an integer >= 1 (got {gap})")
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
     with_cond = [t for t, p in zip(tags, prep) if p[0]["conditionals"]]
     if len(with_cond) >= 2 and not allow_conditional_neighbours:
@@ -946,15 +954,26 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     man_extra = dict(conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)},
                      conditional_neighbours=dict(items=with_cond, allowed=bool(allow_conditional_neighbours),
                                                  used=len(with_cond) >= 2))
+    if gap != BUNDLE_GAP:
+        man_extra["bundle_gap"] = gap
+    if bit_order is not None and list(bit_order) != tags:
+        man_extra["bit_order"] = list(bit_order)
     sizes = [p[0]["n"] for p in prep]
-    pl = bundle_place(dev, sizes)
+    pl = bundle_place(dev, sizes, gap=gap)
     chain, segs = pl["chain"], pl["segments"]
     N = len(chain)
-    offs = [0]
-    for p in prep:
-        offs.append(offs[-1] + p[0]["clbits"])
+    order = list(bit_order) if bit_order is not None else tags
+    start, o = {}, 0
+    for t in order:
+        start[t] = o
+        o += prep[tags.index(t)][0]["clbits"]
+    lo = [start[t] for t in tags]                                  # bit offset of item i (items' order)
+    hi = [lo[i] + prep[i][0]["clbits"] for i in range(len(prep))]
+    nbits = o
     logical = {}
     multi = any(len(p[1].cregs) > 1 for p in prep)
+    if multi and order != tags:
+        raise Refused(f"{tag}: bit_order cannot be changed for sub-items with several registers")
     for which, k in (("ff", 1), ("off", 2)):
         if multi:
             # 2026-11-18: a sub-item with several registers (a register condition) keeps them, renamed per sub-item and
@@ -963,9 +982,9 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
             regs = [ClassicalRegister(len(r), f"s{i}_{r.name}") for i, p in enumerate(prep) for r in p[1].cregs]
             c1 = QuantumCircuit(QuantumRegister(N, "q"), *regs)
         else:
-            c1 = QuantumCircuit(QuantumRegister(N, "q"), ClassicalRegister(offs[-1], "c"))
+            c1 = QuantumCircuit(QuantumRegister(N, "q"), ClassicalRegister(nbits, "c"))
         for i, p in enumerate(prep):
-            c1.compose(p[k], qubits=segs[i], clbits=list(range(offs[i], offs[i + 1])), inplace=True)
+            c1.compose(p[k], qubits=segs[i], clbits=list(range(lo[i], hi[i])), inplace=True)
         logical[which] = c1
     comp = Compiler(dev)
     arms = {w: comp.run(on_device(logical[w], chain, dev.num_qubits)) for w in ("ff", "off")}
@@ -976,13 +995,13 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     if any(p[0]["conditionals"] for p in prep) and not any(n == "if_else" for n, _ in walk(arms["ff"])):
         raise Refused(f"{tag}: the compiler removed the conditionals")
     qsets = [set(chain[k] for k in s) for s in segs]
-    bsets = [set(range(offs[i], offs[i + 1])) for i in range(len(prep))]
+    bsets = [set(range(lo[i], hi[i])) for i in range(len(prep))]
     bundle_acceptance(arms, qsets, bsets)
     table = {}
     for i, (t, p) in enumerate(zip(tags, prep)):
         a, qc, off, succ, spec = p
         phys = [chain[k] for k in segs[i]]
-        bits = list(range(offs[i], offs[i + 1]))
+        bits = list(range(lo[i], hi[i]))
         alone = {w: comp.run(on_device(lg, phys, dev.num_qubits)) for w, lg in (("ff", qc), ("off", off))}
         alone["floor"] = floor_of(alone["ff"])
         for w in ("ff", "off", "floor"):
@@ -990,14 +1009,14 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
             ref = restrict(alone[w], phys, list(range(a["clbits"])))
             if wire_signature(mine) != wire_signature(ref):
                 raise Refused(f"{tag}: sub-item {t} ({w}) differs from the sub-item compiled alone on the same qubits")
-        table[t] = dict(segment=segs[i], qubits=phys, bit_offset=offs[i], tag=t, chain=phys,
+        table[t] = dict(segment=segs[i], qubits=phys, bit_offset=lo[i], tag=t, chain=phys,
                         **_item_extra(t, a, succ, spec), cz=cz_count(restrict(arms["ff"], phys, bits)))
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
     labels = list(range(N))
     common = dict(labels=labels, mapping={k: chain[k] for k in labels}, shots=shots)
-    extra = dict(tag=tag, chain=chain, chain_rule=dict(rule=pl["rule"], start=pl["start"], bundle_gap=BUNDLE_GAP),
-                 clbits=offs[-1], bundle=table)
+    extra = dict(tag=tag, chain=chain, chain_rule=dict(rule=pl["rule"], start=pl["start"], bundle_gap=gap),
+                 clbits=nbits, bundle=table)
     for arm, kind in (("ff", KIND), ("off", KIND + "_off"), ("floor", KIND + "_floor")):
         c = arms[arm]
         U._record(dev, runs, f"ff_{tag}" + ("" if arm == "ff" else f"_{arm}"), "user" if arm == "ff" else arm,
@@ -1006,7 +1025,7 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     _sentinel(dev, runs, shots, sentinel_spec)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra)
     rep = dict(device=dev.name, kind=KIND, bundle=tag, chain=chain, segments=segs,
-               items={t: dict(n=sizes[i], chain=table[t]["qubits"], bit_offset=offs[i], clbits=prep[i][0]["clbits"],
+               items={t: dict(n=sizes[i], chain=table[t]["qubits"], bit_offset=lo[i], clbits=prep[i][0]["clbits"],
                               cz=table[t]["cz"]) for i, t in enumerate(tags)},
                circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
                cz=dict(ff=cz_count(arms["ff"]), off=cz_count(arms["off"]), floor=cz_count(arms["floor"])))

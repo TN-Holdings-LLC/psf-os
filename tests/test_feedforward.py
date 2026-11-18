@@ -550,3 +550,32 @@ def test_pack_fixed_on_tonights_pa_record_gives_the_same_ff_bytes(tmp_path):
         a = open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb").read()
         b = open(os.path.join(out, "runs", f"ff_{t}.qpy"), "rb").read()
         assert a == b, t
+
+
+def test_bundle_gap_and_bit_order(tmp_path):
+    """Interference tests (2026-11-18 evening): gap and bit_order vary placement and bit order apart; the defaults give
+    the bundle as before, byte for byte."""
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(2, 1.1, m=2)
+    two = [("a", qc, sp), ("b", qc, sp)]
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24), allow_conditional_neighbours=True)
+    r0 = FF.build_bundle(dev, two, str(tmp_path / "d0"), **kw)
+    r1 = FF.build_bundle(dev, two, str(tmp_path / "d1"), gap=1, bit_order=["a", "b"], **kw)
+    for f in ("ff_pack.qpy", "ff_pack_off.qpy", "ff_pack_floor.qpy"):
+        assert open(str(tmp_path / "d0" / "runs" / f), "rb").read() == open(str(tmp_path / "d1" / "runs" / f), "rb").read()
+    m1 = json.load(open(str(tmp_path / "d1" / "job" / "manifest.json")))
+    assert "bundle_gap" not in m1 and "bit_order" not in m1
+    r3 = FF.build_bundle(dev, two, str(tmp_path / "g3"), gap=3, **kw)
+    ch = r3["chain"]
+    assert ch.index(r3["items"]["b"]["chain"][0]) - ch.index(r3["items"]["a"]["chain"][-1]) - 1 >= 3
+    assert json.load(open(str(tmp_path / "g3" / "job" / "manifest.json")))["bundle_gap"] == 3
+    rb = FF.build_bundle(dev, two, str(tmp_path / "bo"), bit_order=["b", "a"], **kw)
+    assert rb["items"]["a"]["chain"] == r0["items"]["a"]["chain"]                 # placement unchanged
+    assert rb["items"]["b"]["bit_offset"] == 0 and rb["items"]["a"]["bit_offset"] == 5
+    FF.run_local(str(tmp_path / "bo"))
+    c = FF.cards(str(tmp_path / "bo"))
+    assert abs(c["a"]["ff"]["p1"] - c["b"]["ff"]["p1"]) < 0.04 and c["a"]["floor"]["all_zero"] == 1.0
+    with pytest.raises(FF.Refused, match="bit_order"):
+        FF.build_bundle(dev, two, str(tmp_path / "x"), bit_order=["a"], **kw)
+    with pytest.raises(FF.Refused, match="gap"):
+        FF.build_bundle(dev, two, str(tmp_path / "y"), gap=0, **kw)
