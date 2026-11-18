@@ -270,7 +270,8 @@ def test_bundle_of_lookups_and_the_refusal_across_items(tmp_path):
     dev = Dv.fetch_fake("FakeFez")
     items = [("la", FF.rep3_lookup(0), dict(success=SUCC)), ("lb", FF.rep3_lookup(2), dict(success=SUCC))]
     out = str(tmp_path / "b")
-    rep = FF.build_bundle(dev, items, out, shots=1000, sentinel_spec=dict(kind="echo_clifford", D=24))
+    rep = FF.build_bundle(dev, items, out, shots=1000, sentinel_spec=dict(kind="echo_clifford", D=24),
+                          allow_conditional_neighbours=True)   # the mechanics, not the rule (2026-11-18)
     assert rep["circuits"] == 3 + 4
     from qiskit import qpy
     cs = qpy.load(open(os.path.join(out, "job", "circuits.qpy"), "rb"))

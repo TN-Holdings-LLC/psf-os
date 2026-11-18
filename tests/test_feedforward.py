@@ -349,7 +349,8 @@ def test_bundle_two_copies_give_two_single_cards(tmp_path):
              ("tpb", FF.teleport_test(2), dict(success={2: 0}, bound=0.75)),
              ("rusa", qc, sp), ("rusb", qc, sp)]
     out = str(tmp_path / "b")
-    rep = FF.build_bundle(dev, items, out, shots=4000, sentinel_spec=dict(kind="echo_clifford", D=24))
+    rep = FF.build_bundle(dev, items, out, shots=4000, sentinel_spec=dict(kind="echo_clifford", D=24),
+                          allow_conditional_neighbours=True)   # the mechanics, not the rule (2026-11-18)
     assert rep["circuits"] == 3 + 4
     segs = [set(rep["items"][t]["chain"]) for t in ("tpa", "tpb", "rusa", "rusb")]
     assert all(not (a & b) for i, a in enumerate(segs) for b in segs[i + 1:])
@@ -395,7 +396,8 @@ def test_bundle_time_model_counts_three_arms_and_the_sentinel(tmp_path):
     reps = []
     for n in (2, 5):
         items = [(f"tp{j}", FF.teleport_test(1), dict(success={1: 0})) for j in range(n)]
-        reps.append(FF.build_bundle(dev, items, str(tmp_path / f"t{n}"), sentinel_spec=dict(kind="echo_clifford", D=24)))
+        reps.append(FF.build_bundle(dev, items, str(tmp_path / f"t{n}"), sentinel_spec=dict(kind="echo_clifford", D=24),
+                                    allow_conditional_neighbours=True))
     assert reps[0]["circuits"] == reps[1]["circuits"] == 3 + 4
     assert reps[0]["qpu_seconds_model"] == reps[1]["qpu_seconds_model"]
 
@@ -405,7 +407,8 @@ def test_run_local_splits_a_large_bundle_into_independent_parts(tmp_path):
     qc, sp = FF.rus_chain(1, 1.1, m=3)
     items = [(f"r{j}", qc, sp) for j in range(9)]                 # 9 x 2 qubits + gaps > LOCAL_MAX_QUBITS
     out = str(tmp_path / "big")
-    rep = FF.build_bundle(dev, items, out, shots=2000, sentinel_spec=dict(kind="echo_clifford", D=24))
+    rep = FF.build_bundle(dev, items, out, shots=2000, sentinel_spec=dict(kind="echo_clifford", D=24),
+                          allow_conditional_neighbours=True)
     assert len(rep["chain"]) > FF.LOCAL_MAX_QUBITS
     import qiskit.qpy as qpy
     ff = qpy.load(open(os.path.join(out, "job", "circuits.qpy"), "rb"))[0]
@@ -415,3 +418,135 @@ def test_run_local_splits_a_large_bundle_into_independent_parts(tmp_path):
     for j in range(9):                                             # desk value of L 1, m 3: ff 0.919
         c = cards[f"r{j}"]
         assert abs(c["ff"]["p1"] - 0.919) < 0.03 and c["floor"]["all_zero"] == 1.0
+
+
+# ---- v0.2 prototype (2026-11-18): the three build rules
+
+def _pack_items():
+    """Ten items as tonight's P-A (rd1..5, ea1..5) when the notebook is on TOQB_DIR; else small rus and teleport items."""
+    nb = os.environ.get("TOQB_DIR")
+    if nb and os.path.isdir(os.path.join(nb, "notes", "early_2026-11-17")):
+        import sys
+        for d in ("notes/early_2026-11-17", "notes/compound_2026-11-17", "notes/rus_coherent_2026-11-17",
+                  "notes/timebudget_2026-11-17", "gpu"):
+            p = os.path.join(nb, d)
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        import compound as CP
+        import early as EA
+        return CP.items() + EA.items()
+    out = []
+    for L in (1, 2):
+        qc, sp = FF.rus_chain(L, 1.1, m=2)
+        out.append((f"rus{L}", qc, sp))
+    out += [(f"tp{k}", FF.teleport_test(k), dict(success={k: 0})) for k in (1, 2)]
+    return out
+
+
+def test_pack_fixed_matches_the_single_build(tmp_path):
+    dev = Dv.fetch_fake("FakeMarrakesh")
+    items = _pack_items()
+    a, b = str(tmp_path / "single"), str(tmp_path / "packed")
+    pl = FF.bundle_place(dev, [FF.analyse(qc, form=sp.get("form", "pauli"))["n"] for _, qc, sp in items])
+    chains = {t: [pl["chain"][k] for k in s] for (t, _, _), s in zip(items, pl["segments"])}
+    rs = FF.build(dev, items, a, sentinel_spec=dict(kind="echo_clifford", D=24), chains=chains, max_seconds=90)
+    rp = FF.build(dev, items, b, sentinel_spec=dict(kind="echo_clifford", D=24), pack_fixed=True, max_seconds=90)
+    n = len(items)
+    assert rs["circuits"] == 3 * n + 4 and rp["circuits"] == n + 2 + 4
+    from psf_os import job as J
+    assert rp["qpu_seconds_model"] == round(J.qpu_seconds(n + 2 + 4, 4000), 1) < rs["qpu_seconds_model"]
+    man = json.load(open(os.path.join(b, "job", "manifest.json")))
+    assert man["pack_fixed"]["items"] == [t for t, _, _ in items] and set(man["conditionals_per_item"]) == set(rp["items"])
+    # the ff arms: the same bytes as the single build's on the same qubits
+    for t, _, _ in items:
+        assert open(os.path.join(a, "runs", f"ff_{t}.qpy"), "rb").read() == open(os.path.join(b, "runs", f"ff_{t}.qpy"),
+                                                                                "rb").read()
+    # the packed off arm restricted to each item: the same exact distribution as the single off arm
+    from qiskit import qpy
+    (poff,) = qpy.load(open(os.path.join(b, "runs", f"ff_{FF.FIXED_PACK_TAG}_off.qpy"), "rb"))
+    table = json.load(open(os.path.join(b, "runs", f"ff_{FF.FIXED_PACK_TAG}_off.json")))["fixed_pack_table"]
+    for t, _, _ in items:
+        (soff,) = qpy.load(open(os.path.join(a, "runs", f"ff_{t}_off.qpy"), "rb"))
+        info = table[t]
+        mine = FF.restrict(poff, info["qubits"], list(range(info["bit_offset"], info["bit_offset"] + info["clbits"])))
+        ref = FF.restrict(soff, info["qubits"], list(range(info["clbits"])))
+        dm, dr = FF.exact_distribution(mine), FF.exact_distribution(ref)
+        assert max(abs(dm.get(k, 0) - dr.get(k, 0)) for k in set(dm) | set(dr)) < 1e-12
+    # noiseless: every card of the packed build reads as the single build's (same ff circuits; off within 4 SE; floor 1)
+    FF.run_local(a)
+    FF.run_local(b)
+    ca, cb = FF.cards(a), FF.cards(b)
+    assert set(ca) == set(cb) == {t for t, _, _ in items}
+    for t in ca:
+        assert cb[t]["floor"]["all_zero"] == ca[t]["floor"]["all_zero"] == 1.0
+        for arm in ("ff", "off"):
+            x, y = ca[t][arm], cb[t][arm]
+            key = "p1" if "p1" in x else "share"
+            p, q, nx, ny = x[key], y[key], x["counted"], y["counted"]
+            se = (p * (1 - p) / nx + q * (1 - q) / ny) ** 0.5
+            assert abs(p - q) <= 4 * se + 1e-12
+
+
+def test_conditional_neighbours_refused_unless_allowed(tmp_path):
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(2, 1.1, m=2)
+    two = [("a", qc, sp), ("b", qc, sp)]
+    with pytest.raises(FF.Refused, match="hold conditional operations.*2026-11-17.*2026-11-18"):
+        FF.build_bundle(dev, two, str(tmp_path / "x"), sentinel_spec=dict(kind="echo_clifford", D=24))
+    assert not os.path.exists(str(tmp_path / "x"))
+    out = str(tmp_path / "y")
+    FF.build_bundle(dev, two, out, sentinel_spec=dict(kind="echo_clifford", D=24), allow_conditional_neighbours=True)
+    man = json.load(open(os.path.join(out, "job", "manifest.json")))
+    assert man["conditional_neighbours"] == dict(items=["a", "b"], allowed=True, used=True)
+    assert man["conditionals_per_item"] == {"a": 2, "b": 2}
+    # one conditional item beside a fixed one (tonight's B1): built without the flag
+    off = FF.strip_conditionals(FF.lower(qc))
+    out = str(tmp_path / "z")
+    FF.build_bundle(dev, [("a", qc, sp), ("b", off, dict(success={4: 0}, form="blocks"))], out,
+                    sentinel_spec=dict(kind="echo_clifford", D=24))
+    man = json.load(open(os.path.join(out, "job", "manifest.json")))
+    assert man["conditional_neighbours"] == dict(items=["a"], allowed=False, used=False)
+
+
+def test_several_conditionals_inside_one_item_are_not_neighbours(tmp_path):
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(3, 1.1, m=3)                           # 6 conditionals in one item
+    tp = FF.strip_conditionals(FF.teleport_test(1))
+    out = str(tmp_path / "w")
+    FF.build_bundle(dev, [("big", qc, sp), ("fx", tp, dict(success={1: 0}))], out,
+                    sentinel_spec=dict(kind="echo_clifford", D=24))
+    man = json.load(open(os.path.join(out, "job", "manifest.json")))
+    assert man["conditionals_per_item"] == {"big": 6, "fx": 0} and man["conditional_neighbours"]["used"] is False
+
+
+def test_build_environment_recorded_and_compared(tmp_path, capsys):
+    from psf_os import job as J
+    dev = Dv.fetch_fake("FakeFez")
+    out = str(tmp_path / "e")
+    FF.build(dev, [("tp1", FF.teleport_test(1), dict(success={1: 0}))], out, sentinel_spec=dict(kind="echo_clifford", D=24))
+    man = json.load(open(os.path.join(out, "job", "manifest.json")))
+    env = man["env"]
+    assert set(env) == {"python", "qiskit", "qiskit-aer", "qiskit-ibm-runtime", "numpy"} and env["qiskit"]
+    assert J.verify_env(man)["same"] is True and J.verify_env(os.path.join(out, "job"))["same"] is True
+    man["env"] = dict(env, **{"qiskit-aer": "0.0.1"})
+    r = J.verify_env(man)
+    assert r["same"] is False and "qiskit-aer" in r["differ"] and "sentinel" in r["note"]
+    assert "verify_env:" in capsys.readouterr().out
+    del man["env"]
+    assert J.verify_env(man)["same"] is None
+
+
+def test_pack_fixed_on_tonights_pa_record_gives_the_same_ff_bytes(tmp_path):
+    nb = os.environ.get("TOQB_DIR")
+    pa = os.path.join(nb or "", "results", "parallel-night-2026-11-18", "pa")
+    if not nb or not os.path.isdir(pa):
+        pytest.skip("needs TOQB_DIR with results/parallel-night-2026-11-18")
+    from psf_os.device import Device
+    dev = Device.load(os.path.join(nb, "results", "parallel-night-2026-11-18", "fetch_in", "ibm_marrakesh", "dev"))
+    items = _pack_items()
+    out = str(tmp_path / "pf")
+    FF.build(dev, items, out, sentinel_spec=dict(kind="echo_clifford", D=24), pack_fixed=True)
+    for t, _, _ in items:
+        a = open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb").read()
+        b = open(os.path.join(out, "runs", f"ff_{t}.qpy"), "rb").read()
+        assert a == b, t

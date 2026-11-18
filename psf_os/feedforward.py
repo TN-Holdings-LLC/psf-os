@@ -667,16 +667,23 @@ def _item_extra(tag, a, succ, spec):
     return extra
 
 
-def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None):
+def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
     the "post" view, no extra circuit), one ring sentinel. Nothing is written if any item is refused. Returns the build report (also
     out/build.json).
     chains (2026-11-17): {tag: [physical qubits]} places those items on the given chains (given_chain checks them);
-    items not named are placed by rule C as before."""
+    items not named are placed by rule C as before.
+    pack_fixed (v0.2 prototype, 2026-11-18; default False: the build above, unchanged): every item's ff arm stays its
+    own circuit, while the fixed arms (off and floor: no conditional) of all items are packed into one off circuit and
+    one floor circuit (build_pack_fixed)."""
     from psf_os import job as J
     from psf_os import user2d as U
+    if pack_fixed:
+        if chains:
+            raise Refused("pack_fixed places the items itself (bundle_place); chains cannot be given with it")
+        return build_pack_fixed(dev, items, out, shots=shots, max_seconds=max_seconds, sentinel_spec=sentinel_spec)
     if os.path.exists(out):
         raise Refused(f"{out} exists (nothing is overwritten)")
     tags = [t for t, _, _ in items]
@@ -903,14 +910,26 @@ def bundle_acceptance(arms, qubit_sets, bit_sets):
                 raise Refused(f"{arm}: {name} on qubits {list(qs)} / bits {list(cs)} spans sub-items {sorted(owners)}")
 
 
-def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None):
+CONDITIONAL_NEIGHBOURS_WHY = (
+    "two or more items with conditional operations in one circuit lose what each keeps alone: 2026-11-17 "
+    "(results/packing-night-2026-11-17: ten items packed, the control arm kept 0.20 less, mean d -0.197, 2 SE 0.007) "
+    "and 2026-11-18 (results/parallel-night-2026-11-18, P-B: two items, the first lost 0.06 in B2 and B3, a delay did not "
+    "remove it; the home VS's independent check confirmed the reading)")
+
+
+def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None,
+                 allow_conditional_neighbours=False):
     """items: [(sub_tag, QuantumCircuit, spec)] as for build. One job of one bundle: the sub-items placed by
     bundle_place, every sub-item on its segment and its bits at an offset of one classical register; ff = the
     sub-items' circuits, off = their off arms (explicit or the conditionals removed), floor = floor_of(ff), one ring
     sentinel. Acceptance: checks() of each arm on the bundle's chain, the conditionals kept, bundle_acceptance
     (independence), and per sub-item and arm the same wire_signature as the sub-item compiled alone on the same
     physical qubits. Records: one per arm (tag `tag`), each with the table bundle = {sub_tag: dict(segment, qubits,
-    bit_offset, clbits, the sub-item's spec fields)}; cards() reads one card per sub-item from its own bits."""
+    bit_offset, clbits, the sub-item's spec fields)}; cards() reads one card per sub-item from its own bits.
+    v0.2 prototype (2026-11-18): refused when two or more sub-items hold conditional operations
+    (CONDITIONAL_NEIGHBOURS_WHY), unless allow_conditional_neighbours=True (tests of the loss itself, such as P-B), which
+    the manifest records; several conditionals inside one sub-item (e.g. a table-lookup decoder) are not a neighbour and
+    are only counted (manifest: conditionals_per_item)."""
     from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
     from psf_os import job as J
     from psf_os import user2d as U
@@ -920,6 +939,13 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     if len(items) < 2 or len(set(tags)) != len(tags) or not all(U._tag_ok(t) for t in tags + [tag]):
         raise Refused(f"a bundle holds two or more distinct sub-items with plain tags: {tags}")
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
+    with_cond = [t for t, p in zip(tags, prep) if p[0]["conditionals"]]
+    if len(with_cond) >= 2 and not allow_conditional_neighbours:
+        raise Refused(f"{tag}: sub-items {with_cond} hold conditional operations; {CONDITIONAL_NEIGHBOURS_WHY}. Build them "
+                      "as single items (build), or pass allow_conditional_neighbours=True for a test of the loss itself")
+    man_extra = dict(conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)},
+                     conditional_neighbours=dict(items=with_cond, allowed=bool(allow_conditional_neighbours),
+                                                 used=len(with_cond) >= 2))
     sizes = [p[0]["n"] for p in prep]
     pl = bundle_place(dev, sizes)
     chain, segs = pl["chain"], pl["segments"]
@@ -978,12 +1004,205 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
                   kind, [c], [dict(input="f", setting="z")],
                   extra=dict(extra, ff_arm=arm, cz=cz_count(c), checks=chk[arm]), valid=True, **common)
     _sentinel(dev, runs, shots, sentinel_spec)
-    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra)
     rep = dict(device=dev.name, kind=KIND, bundle=tag, chain=chain, segments=segs,
                items={t: dict(n=sizes[i], chain=table[t]["qubits"], bit_offset=offs[i], clbits=prep[i][0]["clbits"],
                               cz=table[t]["cz"]) for i, t in enumerate(tags)},
                circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
                cz=dict(ff=cz_count(arms["ff"]), off=cz_count(arms["off"]), floor=cz_count(arms["floor"])))
+    json.dump(rep, open(os.path.join(out, "build.json"), "w"), indent=1, default=str)
+    return rep
+
+
+def _packed_logical(prep, k, segs, offs, N):
+    """The items' circuits (k = 1 ff, k = 2 off) side by side on an N-site chain, one register per build_bundle's
+    rule (several registers kept and renamed when any item has more than one)."""
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+    if any(len(p[1].cregs) > 1 for p in prep):
+        regs = [ClassicalRegister(len(r), f"s{i}_{r.name}") for i, p in enumerate(prep) for r in p[1].cregs]
+        c1 = QuantumCircuit(QuantumRegister(N, "q"), *regs)
+    else:
+        c1 = QuantumCircuit(QuantumRegister(N, "q"), ClassicalRegister(offs[-1], "c"))
+    for i, p in enumerate(prep):
+        c1.compose(p[k], qubits=segs[i], clbits=list(range(offs[i], offs[i + 1])), inplace=True)
+    return c1
+
+
+def exact_distribution(qc, tol=1e-15):
+    """Exact distribution of the classical register of a dynamic circuit on its touched qubits (measurements anywhere,
+    if_else on one bit or a register, with or without else), every measurement branch followed with a state vector:
+    {bitstring c[n-1]..c[0]: probability}. For acceptance checks of small items only."""
+    import numpy as np
+    from qiskit.quantum_info import Operator
+    qc = compact(qc)
+    n, nc = qc.num_qubits, qc.num_clbits
+    psi = np.zeros(2 ** n, dtype=complex)
+    psi[0] = 1.0
+    branches = [(1.0, psi, [0] * nc)]
+
+    def apply(psi, qs, U):
+        t = psi.reshape([2] * n)
+        axes = [n - 1 - q for q in qs]
+        k = len(qs)
+        Ut = U.reshape([2] * (2 * k))
+        t = np.tensordot(Ut, t, axes=(list(range(2 * k - 1, k - 1, -1)), axes))
+        t = np.moveaxis(t, list(range(k)), axes[::-1])
+        return t.reshape(-1)
+
+    def holds(bits, op, circ, cmap):
+        cond = op.condition
+        if type(cond[0]).__name__ == "Clbit":
+            return bits[cmap[circ.find_bit(cond[0]).index]] == int(cond[1])
+        reg = cond[0]
+        val = sum(bits[cmap[circ.find_bit(b).index]] << j for j, b in enumerate(reg))
+        return val == int(cond[1])
+
+    def run(branches, circ, qmap, cmap):
+        for ins in circ.data:
+            op = ins.operation
+            qs = [qmap[circ.find_bit(x).index] for x in ins.qubits]
+            if op.name in ("barrier", "delay", "id"):
+                continue
+            if op.name == "measure":
+                cb, q = cmap[circ.find_bit(ins.clbits[0]).index], qs[0]
+                nb = []
+                for w, ps, bits in branches:
+                    t = ps.reshape([2] * n)
+                    for v in (0, 1):
+                        sl = [slice(None)] * n
+                        sl[n - 1 - q] = 1 - v
+                        ph = t.copy()
+                        ph[tuple(sl)] = 0
+                        pr = float(np.vdot(ph, ph).real)
+                        if pr * w > tol:
+                            b2 = list(bits)
+                            b2[cb] = v
+                            nb.append((w * pr, (ph / pr ** 0.5).reshape(-1), b2))
+                branches = nb
+                continue
+            if op.name == "if_else":
+                tb = op.blocks[0]
+                fb = op.blocks[1] if len(op.blocks) > 1 else None
+                yes = [b for b in branches if holds(b[2], op, circ, cmap)]
+                no = [b for b in branches if not holds(b[2], op, circ, cmap)]
+                sub = lambda blk: ({blk.find_bit(x).index: qs[j] for j, x in enumerate(blk.qubits)},
+                                   {blk.find_bit(x).index: cmap[circ.find_bit(ins.clbits[j]).index]
+                                    for j, x in enumerate(blk.clbits)})
+                if yes:
+                    yes = run(yes, tb, *sub(tb))
+                if no and fb is not None:
+                    no = run(no, fb, *sub(fb))
+                branches = yes + no
+                continue
+            U = Operator(op).data
+            branches = [(w, apply(ps, qs, U), b) for w, ps, b in branches]
+        return branches
+
+    out = {}
+    for w, _, bits in run(branches, qc, {j: j for j in range(n)}, {j: j for j in range(nc)}):
+        k = "".join(str(b) for b in bits[::-1])
+        out[k] = out.get(k, 0.0) + w
+    return out
+
+
+FIXED_PACK_TAG = "fixedpack"
+
+
+def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
+    """v0.2 prototype (2026-11-18): the production form of 2026-11-18's P-A. Every item's ff arm is its own circuit,
+    placed on the segment bundle_place gives it; the fixed arms (no conditional) of all items are packed: one off
+    circuit (the items' off arms side by side, one register with a bit offset per item) and one floor circuit
+    (floor_of the items' ff circuits side by side). Acceptance: checks() of every circuit, the conditionals kept in each
+    ff arm, bundle_acceptance on the packed off and floor, and per item the packed off and floor restricted to the item
+    equal (wire_signature) the item's off and floor compiled alone on the same qubits, with the same exact distribution
+    of the off arm (exact_distribution). Records: per item its ff record as build writes it (with fixed_pack naming the
+    packed records), and the packed off and floor records with the table fixed_pack_table = {tag: dict(segment, qubits,
+    bit_offset, clbits)}. cards() gives every item the card build would give it, its off and floor read from its own
+    bits of the packed circuits. Circuits: one per item + 2 + the sentinel's."""
+    from psf_os import job as J
+    from psf_os import user2d as U
+    if os.path.exists(out):
+        raise Refused(f"{out} exists (nothing is overwritten)")
+    tags = [t for t, _, _ in items]
+    if len(items) < 2 or len(set(tags)) != len(tags) or not all(U._tag_ok(t) for t in tags) or FIXED_PACK_TAG in tags:
+        raise Refused(f"pack_fixed needs two or more distinct items with plain tags (not '{FIXED_PACK_TAG}'): {tags}")
+    prep = [_prepare(t, qc, spec) for t, qc, spec in items]
+    sizes = [p[0]["n"] for p in prep]
+    pl = bundle_place(dev, sizes)
+    chain, segs = pl["chain"], pl["segments"]
+    N = len(chain)
+    offs = [0]
+    for p in prep:
+        offs.append(offs[-1] + p[0]["clbits"])
+    comp = Compiler(dev)
+    phys = [[chain[k] for k in s] for s in segs]
+    # the ff arms, single, each on its segment (as build with chains = the segments)
+    ff, chk_ff = {}, {}
+    for i, (t, p) in enumerate(zip(tags, prep)):
+        c = comp.run(on_device(p[1], phys[i], dev.num_qubits))
+        chk = checks(dev, c, phys[i])
+        if not all(chk.values()):
+            raise Refused(f"{t}: acceptance failed: {chk}")
+        if p[0]["conditionals"] and not any(n == "if_else" for n, _ in walk(c)):
+            raise Refused(f"{t}: the compiler removed the conditionals")
+        ff[t], chk_ff[t] = c, chk
+    # the packed fixed arms
+    packed = dict(off=comp.run(on_device(_packed_logical(prep, 2, segs, offs, N), chain, dev.num_qubits)),
+                  floor=floor_of(comp.run(on_device(_packed_logical(prep, 1, segs, offs, N), chain, dev.num_qubits))))
+    chk_p = {arm: checks(dev, c, chain) for arm, c in packed.items()}
+    if not all(all(v.values()) for v in chk_p.values()):
+        raise Refused(f"pack_fixed: acceptance of the packed arms failed: {chk_p}")
+    if any(n == "if_else" for n, _ in walk(packed["off"])):
+        raise Refused("pack_fixed: the packed off arm holds a conditional")
+    qsets = [set(q) for q in phys]
+    bsets = [set(range(offs[i], offs[i + 1])) for i in range(len(prep))]
+    bundle_acceptance(packed, qsets, bsets)
+    table = {}
+    for i, (t, p) in enumerate(zip(tags, prep)):
+        a = p[0]
+        bits = list(range(offs[i], offs[i + 1]))
+        alone_off = comp.run(on_device(p[2], phys[i], dev.num_qubits))
+        alone = dict(off=alone_off, floor=floor_of(ff[t]))
+        for w in ("off", "floor"):
+            mine = restrict(packed[w], phys[i], bits)
+            ref = restrict(alone[w], phys[i], list(range(a["clbits"])))
+            if wire_signature(mine) != wire_signature(ref):
+                raise Refused(f"pack_fixed: {t} ({w}) differs from its {w} arm compiled alone on the same qubits")
+            if w == "off":
+                dm, dr = exact_distribution(mine), exact_distribution(ref)
+                if max(abs(dm.get(k, 0.0) - dr.get(k, 0.0)) for k in set(dm) | set(dr)) > 1e-12:
+                    raise Refused(f"pack_fixed: {t} (off) has another exact distribution packed than alone")
+        table[t] = dict(segment=segs[i], qubits=phys[i], bit_offset=offs[i], clbits=a["clbits"])
+    runs = os.path.join(out, "runs")
+    os.makedirs(runs)
+    rep_items = {}
+    for i, (t, p) in enumerate(zip(tags, prep)):
+        a, qc, off, succ, spec = p
+        labels = list(range(a["n"]))
+        extra = dict(tag=t, chain=phys[i], chain_rule=dict(rule="fixed_pack", start=pl["start"],
+                                                           bundle_gap=BUNDLE_GAP),
+                     **_item_extra(t, a, succ, spec), fixed_pack=FIXED_PACK_TAG)
+        U._record(dev, runs, f"ff_{t}", "user", KIND, [ff[t]], [dict(input="f", setting="z")],
+                  extra=dict(extra, ff_arm="ff", cz=cz_count(ff[t]), checks=chk_ff[t]), valid=True, labels=labels,
+                  mapping={k: phys[i][k] for k in labels}, shots=shots)
+        rep_items[t] = dict(n=a["n"], chain=phys[i], cz=cz_count(ff[t]), mid=a["mid"], conditionals=a["conditionals"],
+                            bit_offset=offs[i], **({"rus": extra["rus"]} if "rus" in extra else {}))
+    labels = list(range(N))
+    pextra = dict(tag=FIXED_PACK_TAG, chain=chain, chain_rule=dict(rule=pl["rule"], start=pl["start"],
+                                                                   bundle_gap=BUNDLE_GAP),
+                  clbits=offs[-1], fixed_pack_table=table)
+    for arm, kind in (("off", KIND + "_off"), ("floor", KIND + "_floor")):
+        c = packed[arm]
+        U._record(dev, runs, f"ff_{FIXED_PACK_TAG}_{arm}", arm, kind, [c], [dict(input="f", setting="z")],
+                  extra=dict(pextra, ff_arm=arm, cz=cz_count(c), checks=chk_p[arm]), valid=True, labels=labels,
+                  mapping={k: chain[k] for k in labels}, shots=shots)
+    _sentinel(dev, runs, shots, sentinel_spec)
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
+                     extra=dict(pack_fixed=dict(items=tags, packed=["off", "floor"]),
+                                conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)}))
+    rep = dict(device=dev.name, kind=KIND, pack_fixed=True, chain=chain, segments=segs, items=rep_items,
+               circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
+               cz=dict(off=cz_count(packed["off"]), floor=cz_count(packed["floor"])))
     json.dump(rep, open(os.path.join(out, "build.json"), "w"), indent=1, default=str)
     return rep
 
@@ -1170,6 +1389,13 @@ def cards(out):
         kind = rec.get("psfos_job", {}).get("kind", "")
         if kind.startswith(KIND):
             got.setdefault(rec["tag"], {})[rec["ff_arm"]] = (rec, cc[("f", "z")])
+    # v0.2 prototype (2026-11-18): the packed fixed arms of a pack_fixed build give each item its off and floor counts
+    # from its own bits
+    for ptag in [t for t, arms in got.items() if any("fixed_pack_table" in r for r, _ in arms.values())]:
+        parms = got.pop(ptag)
+        for arm, (prec, pcnt) in parms.items():
+            for t, info in prec["fixed_pack_table"].items():
+                got.setdefault(t, {})[arm] = (prec, marginal_counts(pcnt, info["bit_offset"], info["clbits"]))
     try:
         sent = sentinel.verdict(job, runs)["status"]
     except Exception as e:  # noqa: BLE001

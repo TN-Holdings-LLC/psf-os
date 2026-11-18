@@ -123,9 +123,49 @@ def build(dev, job, runs, compiler=None, role="user", refs=True, name=None):
     return rec
 
 
-def assemble(dev, runs, out, max_seconds=60):
+ENV_PACKAGES = ("qiskit", "qiskit-aer", "qiskit-ibm-runtime", "numpy")
+
+
+def build_env():
+    """The versions of the build environment (v0.2 prototype, 2026-11-18): python and the packages that shape a
+    compiled circuit's bytes (the ring sentinel's one-qubit synthesis differed between environments on 2026-11-18)."""
+    import platform
+    from importlib import metadata
+    env = dict(python=platform.python_version())
+    for p in ENV_PACKAGES:
+        try:
+            env[p] = metadata.version(p)
+        except metadata.PackageNotFoundError:
+            env[p] = None
+    return env
+
+
+def verify_env(manifest, quiet=False):
+    """Compare the build environment recorded in a job's manifest (or manifest path / job folder) with this one. Never
+    stops anything: returns dict(same, recorded, here, differ, note) and prints the note when they differ (unless
+    quiet). A job built before 2026-11-18's prototype has no record (same None)."""
+    if isinstance(manifest, str):
+        p = manifest if manifest.endswith(".json") else os.path.join(manifest, "manifest.json")
+        manifest = json.load(open(p))
+    here = build_env()
+    rec = manifest.get("env")
+    if rec is None:
+        return dict(same=None, recorded=None, here=here, differ={}, note="no build environment recorded")
+    differ = {k: (rec.get(k), here.get(k)) for k in set(rec) | set(here) if rec.get(k) != here.get(k)}
+    note = ("same build environment" if not differ else
+            "the build environment differs (" + ", ".join(f"{k} {a} -> {b}" for k, (a, b) in sorted(differ.items()))
+            + "): a rebuild may not match the ring sentinel's circuit bytes (the sentinel is never judged); the user, "
+              "off and floor circuits are compared as before")
+    if differ and not quiet:
+        print("verify_env: " + note)
+    return dict(same=not differ, recorded=rec, here=here, differ=differ, note=note)
+
+
+def assemble(dev, runs, out, max_seconds=60, extra=None):
     """One job folder from every valid record in `runs`: circuits.qpy (in record order, references after the echo
-    points) and manifest.json (cells, pubs, shots, the device record). Refuses an over-long job by the time model."""
+    points) and manifest.json (cells, pubs, shots, the device record). Refuses an over-long job by the time model.
+    v0.2 prototype (2026-11-18): the manifest also records the build environment (env, build_env()) and any `extra`
+    fields the builder passes; circuits.qpy is unchanged."""
     from qiskit import qpy
     if os.path.exists(out):
         raise FileExistsError(f"{out} exists: a job folder is never overwritten")
@@ -175,6 +215,11 @@ def assemble(dev, runs, out, max_seconds=60):
         # jobs without conditionals keep the manifest they had
         from psf_os.feedforward import broadcast_record
         man["broadcast"] = broadcast_record(circuits)
+    man["env"] = build_env()
+    for k, v in (extra or {}).items():
+        if k in man:
+            raise RuntimeError(f"assemble: extra field {k} would overwrite the manifest's own")
+        man[k] = v
     json.dump(man, open(os.path.join(out, "manifest.json"), "w"), indent=1)
     return man
 
