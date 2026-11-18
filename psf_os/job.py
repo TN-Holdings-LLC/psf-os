@@ -170,6 +170,11 @@ def assemble(dev, runs, out, max_seconds=60):
                stay=True,  # placed for this device's registry: TOQB's submit never moves it (TOQB job_stays)
                roles={c["name"]: c["role"] for c in cells},  # which cells are the user's, which are sentinels
                user_pubs=[k for k, p in enumerate(pubs) if cells[p["cell"]]["role"] == "user"])
+    if any(c.has_control_flow_op() for c in circuits):
+        # 2026-11-18: the job's broadcasts (conditionals and the bits their tests read), recorded, never enforced;
+        # jobs without conditionals keep the manifest they had
+        from psf_os.feedforward import broadcast_record
+        man["broadcast"] = broadcast_record(circuits)
     json.dump(man, open(os.path.join(out, "manifest.json"), "w"), indent=1)
     return man
 

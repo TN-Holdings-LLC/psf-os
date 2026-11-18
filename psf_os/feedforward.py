@@ -7,6 +7,11 @@ Accepted (narrow on purpose; anything else is refused with the reason; form "pau
   * one-qubit gates (h, x, y, z, s, sdg, t, tdg, sx, sxdg, rx, ry, rz, p, id);
   * measurements anywhere, one classical register; each classical bit written once (a definite record per shot);
   * `if_test` blocks on one classical bit already written, value 0 or 1, holding only X or Z on one qubit, no else;
+  * (2026-11-18, branch register-cond-2026-11-18) `if_test` on a whole ClassicalRegister of at most 32 bits, every bit
+    already written, against a value 0 <= value < 2^width: a table look-up on one register is several such tests with
+    different values. The circuit may then hold several classical registers that partition its bits in order (no
+    bit in two registers). Expressions and arithmetic stay refused (IBM runs neither). The block rules do not change.
+    Every job with conditionals records its broadcasts in the manifest (`broadcast_record`), never enforced;
   * `delay` on one qubit at the top level (2026-11-17: to hold a schedule, e.g. notes/next_2026-11-17/pin_delay.py in
     the notebook); kept through placement, compilation, the off and floor arms, and the identity noiselessly; refused
     inside a conditional block.
@@ -95,6 +100,61 @@ def teleport_test(k, feed_forward=True):
     return qc
 
 
+def rep3_lookup(error=None, feed_forward=True):
+    """The distance-3 bit-flip repetition code with a look-up decoder in real time (2026-11-18, the register
+    condition's test). Line d0 a0 d1 a1 d2 (qubits 0 .. 4). d0 holds T^dag|+>, encoded into d0 d1 d2 through the
+    ancillas (CX(d0, a0) CX(a0, d1) CX(d0, a0), likewise d1 -> d2: neighbours only, the ancillas back to 0); then X on
+    data `error` (None, 0, 1 or 2); the parities a0 = d0 + d1, a1 = d1 + d2 measured into register s (s[0], s[1]); the
+    look-up: s == 1 -> X d0, s == 3 -> X d1, s == 2 -> X d2 (three tests on one register); the ancillas reset by a
+    conditional X on their own bit (single-bit tests); decoded back onto d0; then T and H on d0: noiselessly every shot
+    reads c = 000 (c[0] = d0, c[1] = d1, c[2] = d2). Without the look-up and the resets (feed_forward=False; the off
+    arm removes every conditional) an X on d0 reaches d0 before the T, so c[0] is right in half the shots; an X on d1
+    or d2, or an ancilla left at 1, ends on c[1] or c[2]."""
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+    if error not in (None, 0, 1, 2):
+        raise ValueError("error is None, 0, 1 or 2")
+    q = QuantumRegister(5, "q")
+    s, c = ClassicalRegister(2, "s"), ClassicalRegister(3, "c")
+    qc = QuantumCircuit(q, s, c)
+    d, a = (0, 2, 4), (1, 3)
+
+    def cx(ctl, tgt):
+        qc.h(tgt)
+        qc.cz(ctl, tgt)
+        qc.h(tgt)
+
+    def copy(i):                         # d[i+1] ^= d[i] through a[i], a[i] back to 0
+        cx(d[i], a[i])
+        cx(a[i], d[i + 1])
+        cx(d[i], a[i])
+    qc.h(d[0])
+    qc.tdg(d[0])
+    copy(0)
+    copy(1)
+    if error is not None:
+        qc.x(d[error])
+    cx(d[0], a[0])
+    cx(d[1], a[0])
+    cx(d[1], a[1])
+    cx(d[2], a[1])
+    qc.measure(a[0], s[0])
+    qc.measure(a[1], s[1])
+    if feed_forward:
+        for value, k in ((1, 0), (3, 1), (2, 2)):
+            with qc.if_test((s, value)):
+                qc.x(d[k])
+    for i in (0, 1):
+        with qc.if_test((s[i], 1)):
+            qc.x(a[i])
+    copy(1)
+    copy(0)
+    qc.t(d[0])
+    qc.h(d[0])
+    for i in range(3):
+        qc.measure(d[i], c[i])
+    return qc
+
+
 def rus_q(theta):
     """The repeat-until-success neuron's angle: tan q = tan^2 theta (Cao, Guerreschi, Aspuru-Guzik 2017)."""
     return math.atan(math.tan(theta) ** 2)
@@ -171,6 +231,61 @@ def _cond_bit(op, qc):
     return qc.find_bit(bit).index, int(val)
 
 
+REGISTER_MAX_BITS = 32          # IBM, Execute dynamic circuits: "The operand used in an if_test statement must be 32
+                                # or fewer bits"
+
+
+def condition_of(op, qc):
+    """(bit indices, value, register or None) of a conditional's test (2026-11-18, register conditions): one classical
+    bit compared with 0 or 1 (as before, by _cond_bit), or a whole ClassicalRegister of at most 32 bits compared with a
+    value 0 <= value < 2^width (bits in the register's order, bit 0 the least significant). An expression, arithmetic
+    or anything else is refused (IBM: "Arithmetic operations are not supported")."""
+    from qiskit.circuit import ClassicalRegister, Clbit
+    cond = getattr(op, "condition", None)
+    if isinstance(cond, tuple) and len(cond) == 2 and isinstance(cond[0], Clbit):
+        b, v = _cond_bit(op, qc)
+        return (b,), v, None
+    if not (isinstance(cond, tuple) and len(cond) == 2 and isinstance(cond[0], ClassicalRegister)):
+        raise Refused("a conditional tests one classical bit or one classical register against a value; expressions "
+                      "and arithmetic are not run on IBM devices")
+    reg, val = cond
+    w = len(reg)
+    if not 1 <= w <= REGISTER_MAX_BITS:
+        raise Refused(f"a conditional's register '{reg.name}' has {w} bits; IBM takes at most {REGISTER_MAX_BITS}")
+    try:
+        val = int(val)
+    except (TypeError, ValueError):
+        raise Refused(f"register '{reg.name}' is compared with {val!r}, not an integer") from None
+    if not 0 <= val < 2 ** w:
+        raise Refused(f"register '{reg.name}' ({w} bits) is compared with {val}, outside 0 .. {2 ** w - 1}")
+    return tuple(qc.find_bit(b).index for b in reg), val, reg
+
+
+def _tests_a_register(qc):
+    return any(ins.operation.name == "if_else" and type(ins.operation.condition[0]).__name__ == "ClassicalRegister"
+               for ins in qc.data)
+
+
+def _check_registers(qc, many=False):
+    """One register holding every bit (as before), or (2026-11-18) several registers that partition the bits in order:
+    disjoint, every bit in exactly one, and the circuit's bit order the registers' bits one after the other. Then a
+    counts key read with its spaces removed has clbit k at position -1-k, on Aer and in IBM's joined data alike, and
+    no bit is reported twice (an aliasing register would be). Several registers are accepted only when a conditional
+    tests a register (or many=True: an explicit off arm of such an item); every other circuit is refused as before."""
+    if len(qc.cregs) == 1:
+        if qc.num_clbits != len(qc.cregs[0]):
+            raise Refused("every classical bit must belong to the one register")
+        return
+    if not qc.cregs or not (many or _tests_a_register(qc)):
+        raise Refused(f"one classical register holding every measured bit (got {len(qc.cregs)})")
+    order = [b for r in qc.cregs for b in r]
+    if len(set(order)) != len(order):
+        raise Refused("classical registers overlap (a bit in two registers would be reported twice)")
+    if order != list(qc.clbits):
+        raise Refused("the classical registers must hold every bit, one register after another in the circuit's bit "
+                      "order")
+
+
 FORMS = ("pauli", "blocks")
 DELAY_IN_BLOCK = ("a delay inside a conditional block is not read (its timing would depend on the branch); put "
                   "delays at the top level only")
@@ -202,20 +317,24 @@ def _check_block(body, qmap):
     return cz, gates
 
 
-def analyse(qc, form="pauli"):
+def analyse(qc, form="pauli", many_registers=False):
     """dict(n, clbits, mid, conditionals, cz, cz_in_blocks) or Refused. Checks the accepted form (module docstring):
     form "pauli" (conditional blocks hold one X or Z) or "blocks" (fixed sub-circuits of one-qubit gates and
     neighbour CZ; no measurement, reset or nesting inside, as IBM's dynamic circuits require). CY and CRY are lowered
-    to CZ and one-qubit gates first (`lower`)."""
+    to CZ and one-qubit gates first (`lower`). With a register test (2026-11-18) also register_conditionals and
+    condition_bits; many_registers=True accepts several registers without one (an explicit off arm)."""
     if form not in FORMS:
         raise Refused(f"form {form!r} is not one of {FORMS}")
+    for ins in qc.data:
+        # 2026-11-18: a register test with a value out of range cannot be rebuilt by `lower` (Qiskit refuses it), so
+        # every test is read first; for one-bit tests this is the same reading as below
+        if ins.operation.name == "if_else":
+            condition_of(ins.operation, qc)
     qc = lower(qc)
     cz_blocks = 0
-    if len(qc.cregs) != 1:
-        raise Refused(f"one classical register holding every measured bit (got {len(qc.cregs)})")
-    if qc.num_clbits != len(qc.cregs[0]):
-        raise Refused("every classical bit must belong to the one register")
+    _check_registers(qc, many_registers)
     written, measured_last, cz, conds, mids = set(), {}, 0, 0, 0
+    reg_conds, cond_bits = 0, 0
     for pos, ins in enumerate(qc.data):
         op = ins.operation
         name = op.name
@@ -230,9 +349,16 @@ def analyse(qc, form="pauli"):
             measured_last[qs[0]] = pos
             continue
         if name == "if_else":
-            b, _ = _cond_bit(op, qc)
-            if b not in written:
-                raise Refused(f"a conditional tests bit {b} before it is measured")
+            bits, _, reg = condition_of(op, qc)
+            if reg is None:
+                if bits[0] not in written:
+                    raise Refused(f"a conditional tests bit {bits[0]} before it is measured")
+            else:
+                late = [b for b in bits if b not in written]
+                if late:
+                    raise Refused(f"a conditional tests register '{reg.name}' before its bits {late} are measured")
+                reg_conds += 1
+            cond_bits += len(bits)
             if len(op.blocks) != 1 or op.blocks[0] is None:
                 raise Refused("a conditional has no else branch here")
             body = op.blocks[0]
@@ -274,7 +400,11 @@ def analyse(qc, form="pauli"):
     ops = [ins.operation.name for ins in qc.data]
     last_op = max((i for i, nm in enumerate(ops) if nm not in ("measure", "barrier", "delay")), default=-1)
     mids = sum(1 for i, nm in enumerate(ops) if nm == "measure" and i < last_op)   # an operation follows it
-    return dict(n=qc.num_qubits, clbits=qc.num_clbits, mid=mids, conditionals=conds, cz=cz, cz_in_blocks=cz_blocks)
+    out = dict(n=qc.num_qubits, clbits=qc.num_clbits, mid=mids, conditionals=conds, cz=cz, cz_in_blocks=cz_blocks)
+    if reg_conds:
+        # 2026-11-18: only when a register is tested, so single-bit items keep exactly the fields they had
+        out.update(register_conditionals=reg_conds, condition_bits=cond_bits)
+    return out
 
 
 def lower(qc):
@@ -384,6 +514,36 @@ def walk(qc):
     return out
 
 
+BROADCAST_NOTE = ("recorded, not enforced (2026-11-18): IBM, Execute dynamic circuits: 'if you broadcast 60 bits each "
+                  "time, then the job can have approximately 300 broadcasts ... If you broadcast just one bit each "
+                  "time, however, then the job can have 2400 broadcasts'. Counted here: every if_else (top level and "
+                  "in blocks) as one conditional, and the bits its test reads (1 for a bit, the width for a register)")
+
+
+def broadcast_record(circuits):
+    """Per circuit and for the job: the number of conditionals and the bits their tests read (a record for the
+    manifest; nothing is refused by it)."""
+    def count(cc):
+        n = bits = 0
+        for ins in cc.data:
+            if ins.operation.name == "if_else":
+                cb = ins.operation.condition[0]
+                n += 1
+                bits += len(cb) if type(cb).__name__ == "ClassicalRegister" else 1
+                for b in ins.operation.blocks:
+                    if b is not None:
+                        bn, bb = count(b)
+                        n, bits = n + bn, bits + bb
+        return n, bits
+    per = []
+    for c in circuits:
+        n, bits = count(c)
+        per.append(dict(conditionals=n, condition_bits=bits))
+    return dict(per_circuit=per, conditionals=sum(p["conditionals"] for p in per),
+                condition_bits=sum(p["condition_bits"] for p in per),
+                max_conditionals_per_circuit=max((p["conditionals"] for p in per), default=0), note=BROADCAST_NOTE)
+
+
 def cz_count(qc):
     return sum(1 for n, _ in walk(qc) if n == "cz")
 
@@ -454,7 +614,7 @@ def _prepare(tag, qc, spec):
         # an explicit off arm (2026-11-17): for a circuit without conditionals (e.g. repeat-until-success written
         # coherently) the comparison without control is a different circuit (one try), given by the caller
         try:
-            ao = analyse(off, form=spec.get("form", "pauli"))
+            ao = analyse(off, form=spec.get("form", "pauli"), many_registers=len(qc.cregs) > 1)
         except Refused as e:
             raise Refused(f"{tag} (off arm): {e}") from None
         if (ao["n"], ao["clbits"]) != (a["n"], a["clbits"]):
@@ -475,6 +635,8 @@ def _item_extra(tag, a, succ, spec):
     if spec.get("kind") == "rus":
         extra["rus"] = {k: spec[k] for k in ("L", "theta", "m", "out_bit", "tries", "exact")}
         extra["logical_cz_in_blocks"] = a["cz_in_blocks"]
+    if a.get("register_conditionals"):
+        extra.update(register_conditionals=a["register_conditionals"], condition_bits=a["condition_bits"])
     return extra
 
 
@@ -532,6 +694,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         if spec.get("kind") == "rus":
             extra["rus"] = {k: spec[k] for k in ("L", "theta", "m", "out_bit", "tries", "exact")}
             extra["logical_cz_in_blocks"] = a["cz_in_blocks"]
+        if a.get("register_conditionals"):
+            extra.update(register_conditionals=a["register_conditionals"], condition_bits=a["condition_bits"])
         for arm, kind in (("ff", KIND), ("off", KIND + "_off"), ("floor", KIND + "_floor")):
             c = arms[arm]
             U._record(dev, runs, f"ff_{tag}" + ("" if arm == "ff" else f"_{arm}"), "user" if arm == "ff" else arm,
@@ -595,7 +759,8 @@ def bundle_place(dev, sizes, gap=BUNDLE_GAP):
 
 def walk_bits(qc):
     """Every instruction, top level and inside blocks: (name, qubit indices, clbit indices including the condition's
-    bit) of the top circuit; a condition on a whole register gives the bit index -1."""
+    bits) of the top circuit. A condition on a register (2026-11-18) lists every bit of the register; before, it gave
+    the bit index -1 (nothing produced one: registers were refused at the entrance)."""
     out = []
 
     def rec(c, qmap, cmap):
@@ -605,7 +770,12 @@ def walk_bits(qc):
             cs = [cmap[c.find_bit(x).index] for x in ins.clbits]
             if op.name == "if_else":
                 cb = op.condition[0]
-                cs = cs + ([cmap[c.find_bit(cb).index]] if type(cb).__name__ == "Clbit" else [-1])
+                if type(cb).__name__ == "Clbit":
+                    cs = cs + [cmap[c.find_bit(cb).index]]
+                elif type(cb).__name__ == "ClassicalRegister":
+                    cs = cs + [cmap[c.find_bit(x).index] for x in cb]
+                else:
+                    cs = cs + [-1]
                 out.append((op.name, tuple(qs), tuple(cs)))
                 for b in op.blocks:
                     if b is not None:
@@ -619,27 +789,42 @@ def walk_bits(qc):
 
 def restrict(qc, qubits, clbits):
     """The instructions of qc on the given qubits (in that order) and clbits (in that order), as a circuit of
-    len(qubits) qubits and one register of len(clbits) bits. Refused if an instruction straddles the given set."""
+    len(qubits) qubits and one register c of len(clbits) bits. Refused if an instruction straddles the given set.
+    A condition on a register (2026-11-18) is rebuilt on a register of the same bits, in the register's order, of the
+    restricted circuit (an aliasing register over c's bits: for local simulation and comparison only, never sent)."""
     from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
     from qiskit.circuit import IfElseOp
     qi = {q: k for k, q in enumerate(qubits)}
     ci = {c: k for k, c in enumerate(clbits)}
     out = QuantumCircuit(QuantumRegister(len(qubits), "q"), ClassicalRegister(len(clbits), "c"))
+    aliases = {}
     for ins in qc.data:
         qs = [qc.find_bit(x).index for x in ins.qubits]
         cs = [qc.find_bit(x).index for x in ins.clbits]
         op = ins.operation
-        cond = None
+        cond, rbits = None, None
         if op.name == "if_else":
-            cond = qc.find_bit(op.condition[0]).index
+            cb = op.condition[0]
+            if type(cb).__name__ == "ClassicalRegister":
+                rbits = [qc.find_bit(x).index for x in cb]
+            else:
+                cond = qc.find_bit(cb).index
         inq = [q in qi for q in qs]
-        inc = [c in ci for c in cs + ([cond] if cond is not None else [])]
+        inc = [c in ci for c in cs + ([cond] if cond is not None else []) + (rbits or [])]
         if not any(inq) and not any(inc):
             continue
         if not all(inq) or not all(inc):
             raise Refused(f"{op.name} on qubits {qs} / bits {cs} straddles the given set")
         if op.name == "if_else":
-            op = IfElseOp((out.clbits[ci[cond]], op.condition[1]), op.blocks[0].copy(),
+            if rbits is None:
+                test = out.clbits[ci[cond]]
+            else:
+                key = tuple(ci[b] for b in rbits)
+                if key not in aliases:
+                    aliases[key] = ClassicalRegister(bits=[out.clbits[k] for k in key], name=f"r{len(aliases)}")
+                    out.add_register(aliases[key])
+                test = aliases[key]
+            op = IfElseOp((test, op.condition[1]), op.blocks[0].copy(),
                           op.blocks[1].copy() if len(op.blocks) > 1 and op.blocks[1] is not None else None)
         out.append(op, [out.qubits[qi[q]] for q in qs], [out.clbits[ci[c]] for c in cs])
     return out
@@ -654,14 +839,23 @@ def wire_signature(qc):
         qs = tuple(c.find_bit(x).index for x in ins.qubits)
         cs = tuple(c.find_bit(x).index for x in ins.clbits)
         if op.name == "if_else":
-            cond = (c.find_bit(op.condition[0]).index, int(op.condition[1]))
+            cb = op.condition[0]
+            if type(cb).__name__ == "ClassicalRegister":
+                # 2026-11-18: a register's test, by its bits in the register's order and the value
+                cond = ("register", tuple(c.find_bit(x).index for x in cb), int(op.condition[1]))
+            else:
+                cond = (c.find_bit(cb).index, int(op.condition[1]))
             return ("if_else", qs, cs, cond, tuple(wire_signature(b) if b is not None else None for b in op.blocks))
         return (op.name, qs, cs, tuple(round(float(p), 12) if isinstance(p, (int, float)) else str(p)
                                        for p in op.params))
     wires = {}
     for ins in qc.data:
         s = one(qc, ins)
-        ws = [("q", i) for i in s[1]] + [("c", i) for i in s[2]] + ([("c", s[3][0])] if s[0] == "if_else" else [])
+        if s[0] == "if_else":
+            tested = list(s[3][1]) if s[3][0] == "register" else [s[3][0]]
+        else:
+            tested = []
+        ws = [("q", i) for i in s[1]] + [("c", i) for i in s[2]] + [("c", i) for i in tested]
         for w in ws:
             wires.setdefault(w, []).append(s)
     return tuple(sorted((w, tuple(v)) for w, v in wires.items()))
@@ -669,8 +863,9 @@ def wire_signature(qc):
 
 def bundle_acceptance(arms, qubit_sets, bit_sets):
     """Refused if any instruction or barrier of any arm (blocks included) acts on the qubits of two sub-items, reads or
-    writes bits of two sub-items, or touches qubits of one sub-item and bits of another; or if a conditional reads a
-    whole register."""
+    writes bits of two sub-items, or touches qubits of one sub-item and bits of another. A conditional on a register
+    (2026-11-18) counts every bit of the register, so a register holding bits of another sub-item is refused; a test
+    whose bits cannot be listed (-1) is refused as before."""
     for arm, c in arms.items():
         for name, qs, cs in walk_bits(c):
             if -1 in cs:
@@ -706,8 +901,16 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     for p in prep:
         offs.append(offs[-1] + p[0]["clbits"])
     logical = {}
+    multi = any(len(p[1].cregs) > 1 for p in prep)
     for which, k in (("ff", 1), ("off", 2)):
-        c1 = QuantumCircuit(QuantumRegister(N, "q"), ClassicalRegister(offs[-1], "c"))
+        if multi:
+            # 2026-11-18: a sub-item with several registers (a register condition) keeps them, renamed per sub-item and
+            # laid one after another in bit order, so compose maps every register condition onto a register of the
+            # bundle (one register "c" would make compose add an aliasing register: bits reported twice)
+            regs = [ClassicalRegister(len(r), f"s{i}_{r.name}") for i, p in enumerate(prep) for r in p[1].cregs]
+            c1 = QuantumCircuit(QuantumRegister(N, "q"), *regs)
+        else:
+            c1 = QuantumCircuit(QuantumRegister(N, "q"), ClassicalRegister(offs[-1], "c"))
         for i, p in enumerate(prep):
             c1.compose(p[k], qubits=segs[i], clbits=list(range(offs[i], offs[i + 1])), inplace=True)
         logical[which] = c1
