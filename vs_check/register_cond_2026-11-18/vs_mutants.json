@@ -1,0 +1,62 @@
+[
+ {
+  "mutant": "rep3: the test that corrects d0 compares with 2 instead of 1 (a value shifted by one)",
+  "applied": true,
+  "caught": true,
+  "summary": "4 failed, 7 passed in 47.43s"
+ },
+ {
+  "mutant": "rep3: the syndrome bits exchanged (register bit order)",
+  "applied": true,
+  "caught": true,
+  "summary": "3 failed, 8 passed in 121.07s (0:02:01)"
+ },
+ {
+  "mutant": "restrict: the rebuilt register's bits in reverse order",
+  "applied": true,
+  "caught": true,
+  "summary": "1 failed, 10 passed in 109.02s (0:01:49)"
+ },
+ {
+  "mutant": "condition_of: the value 2^width accepted (range off by one)",
+  "applied": true,
+  "caught": true,
+  "summary": "1 failed, 10 passed in 122.00s (0:02:02)"
+ },
+ {
+  "mutant": "condition_of: 33 bits accepted",
+  "applied": true,
+  "caught": true,
+  "summary": "1 failed, 10 passed in 127.35s (0:02:07)"
+ },
+ {
+  "mutant": "analyse: a register test before its bits are measured accepted",
+  "applied": true,
+  "caught": true,
+  "summary": "1 failed, 10 passed in 139.24s (0:02:19)"
+ },
+ {
+  "mutant": "_check_registers: overlapping registers accepted",
+  "applied": true,
+  "caught": true,
+  "summary": "1 failed, 10 passed in 149.77s (0:02:29)"
+ },
+ {
+  "mutant": "walk_bits: a register test lists only its first bit (bundle_acceptance would miss the others)",
+  "applied": true,
+  "caught": false,
+  "summary": "11 passed in 71.99s (0:01:11)"
+ },
+ {
+  "mutant": "wire_signature: a register's bits in reverse order",
+  "applied": true,
+  "caught": true,
+  "summary": "1 failed, 10 passed in 85.64s (0:01:25)"
+ },
+ {
+  "mutant": "broadcast_record: a register test counted as one bit",
+  "applied": true,
+  "caught": true,
+  "summary": "2 failed, 9 passed in 147.36s (0:02:27)"
+ }
+]

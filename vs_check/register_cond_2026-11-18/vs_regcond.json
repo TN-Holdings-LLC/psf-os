@@ -1,0 +1,402 @@
+{
+ "results": [
+  {
+   "section": "S1",
+   "name": "refused: a 33-bit register",
+   "ok": true,
+   "note": "a conditional's register 's' has 33 bits; IBM takes at most 32"
+  },
+  {
+   "section": "S1",
+   "name": "accepted: a 32-bit register with value 2^32 - 1",
+   "ok": true,
+   "note": "condition_bits 32"
+  },
+  {
+   "section": "S1",
+   "name": "refused: a register with a bit not yet measured",
+   "ok": true,
+   "note": "a conditional tests register 's' before its bits [1] are measured"
+  },
+  {
+   "section": "S1",
+   "name": "refused: value 4 for 2 bits",
+   "ok": true,
+   "note": "register 's' (2 bits) is compared with 4, outside 0 .. 3"
+  },
+  {
+   "section": "S1",
+   "name": "refused: value -1 for 2 bits",
+   "ok": true,
+   "note": "by qiskit at construction: TypeError"
+  },
+  {
+   "section": "S1",
+   "name": "refused: an expression (s == 1)",
+   "ok": true,
+   "note": "a conditional tests one classical bit or one classical register agains"
+  },
+  {
+   "section": "S1",
+   "name": "refused: an expression (s[0] & s[1])",
+   "ok": true,
+   "note": "a conditional tests one classical bit or one classical register agains"
+  },
+  {
+   "section": "S1",
+   "name": "refused: a measurement in the block",
+   "ok": true,
+   "note": "'measure' inside a conditional is not run on IBM devices (IBM, Execute"
+  },
+  {
+   "section": "S1",
+   "name": "refused: a reset in the block",
+   "ok": true,
+   "note": "'reset' inside a conditional is not run on IBM devices (IBM, Execute d"
+  },
+  {
+   "section": "S1",
+   "name": "refused: nesting",
+   "ok": true,
+   "note": "a conditional inside a conditional is not run on IBM devices (IBM, Exe"
+  },
+  {
+   "section": "S1",
+   "name": "refused: an else branch",
+   "ok": true,
+   "note": "a conditional has no else branch here"
+  },
+  {
+   "section": "S1",
+   "name": "refused: overlapping registers",
+   "ok": true,
+   "note": "classical registers overlap (a bit in two registers would be reported "
+  },
+  {
+   "section": "S2",
+   "name": "look-up table in the circuit equals the one derived from the parities",
+   "ok": true,
+   "note": "{1: 0, 3: 1, 2: 2}"
+  },
+  {
+   "section": "S2",
+   "name": "logical circuit, error None: c = 000 in every shot",
+   "ok": true,
+   "note": "1 outcome(s)"
+  },
+  {
+   "section": "S2",
+   "name": "logical circuit, error 0: c = 000 in every shot",
+   "ok": true,
+   "note": "1 outcome(s)"
+  },
+  {
+   "section": "S2",
+   "name": "logical circuit, error 1: c = 000 in every shot",
+   "ok": true,
+   "note": "1 outcome(s)"
+  },
+  {
+   "section": "S2",
+   "name": "logical circuit, error 2: c = 000 in every shot",
+   "ok": true,
+   "note": "1 outcome(s)"
+  },
+  {
+   "section": "S2",
+   "name": "compiled: every ff arm right, every floor zero, register tests read bits [0, 1]",
+   "ok": true,
+   "note": "none wrong"
+  },
+  {
+   "section": "S3",
+   "name": "restrict with clbits [0, 1, 2, 3, 4]: register bits in s's order, decoder right for every error",
+   "ok": true,
+   "note": ""
+  },
+  {
+   "section": "S3",
+   "name": "restrict with clbits [4, 3, 2, 1, 0]: register bits in s's order, decoder right for every error",
+   "ok": true,
+   "note": ""
+  },
+  {
+   "section": "S3",
+   "name": "restrict with clbits [1, 0, 4, 2, 3]: register bits in s's order, decoder right for every error",
+   "ok": true,
+   "note": ""
+  },
+  {
+   "section": "S3",
+   "name": "restrict leaving out a register bit is refused",
+   "ok": true,
+   "note": "measure on qubits [1] / bits [0] straddles the given set"
+  },
+  {
+   "section": "S4",
+   "name": "bundle_acceptance refuses a register test reading another item's bit",
+   "ok": true,
+   "note": "ff: if_else on qubits [1] / bits [0, 1, 0, 1] spans sub-item"
+  },
+  {
+   "section": "S4",
+   "name": "bundle_acceptance accepts a register test inside one item",
+   "ok": true,
+   "note": ""
+  },
+  {
+   "section": "S4",
+   "name": "bundle of two look-ups compiled: registers partition the bits, tests on (0,1) and (5,6), all right",
+   "ok": true,
+   "note": ""
+  },
+  {
+   "section": "S5",
+   "name": "broadcast record per circuit equals the hand count",
+   "ok": true,
+   "note": "job: 48 conditionals, 72 bits; hand 48, 72"
+  },
+  {
+   "section": "S5",
+   "name": "beside: IBM's broadcasts (unchanged register = one) for the ff arm of error None",
+   "ok": true,
+   "note": "record (5, 8) (conditionals, bits); IBM reading (1, 2)"
+  },
+  {
+   "section": "S6",
+   "name": "mutant 'value': the logical circuit is wrong for some error",
+   "ok": true,
+   "note": "wrong for errors [0, 2]"
+  },
+  {
+   "section": "S6",
+   "name": "mutant 'value' compiled: caught",
+   "ok": true,
+   "note": "ff_r0: c not 000 in every shot; ff_r2: c not 000 in every shot"
+  },
+  {
+   "section": "S6",
+   "name": "mutant 'value': psf-os run_local + cards show a share below 1",
+   "ok": true,
+   "note": "{'r0': 0.0, 'r2': 0.0}"
+  },
+  {
+   "section": "S6",
+   "name": "mutant 'swap': the logical circuit is wrong for some error",
+   "ok": true,
+   "note": "wrong for errors [0, 2]"
+  },
+  {
+   "section": "S6",
+   "name": "mutant 'swap' compiled: caught",
+   "ok": true,
+   "note": "ff_r0: c not 000 in every shot; ff_r2: c not 000 in every shot"
+  },
+  {
+   "section": "S6",
+   "name": "mutant 'swap': psf-os run_local + cards show a share below 1",
+   "ok": true,
+   "note": "{'r0': 0.501, 'r2': 0.501}"
+  }
+ ],
+ "broadcast": {
+  "record": [
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ]
+  ],
+  "hand": [
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    5,
+    8
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ]
+  ],
+  "ibm": [
+   [
+    1,
+    2
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    2,
+    2
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ],
+   [
+    0,
+    0
+   ]
+  ]
+ }
+}

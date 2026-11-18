@@ -1,0 +1,5 @@
+qpe_A            circuits.qpy same bytes (febee21af658); manifest apart from 'written' same; fields only in the second: ['broadcast']
+qpe_B            circuits.qpy same bytes (6836cf2705c6); manifest apart from 'written' same; fields only in the second: ['broadcast']
+teleport         circuits.qpy same bytes (0cdd94247b9e); manifest apart from 'written' same; fields only in the second: ['broadcast']
+teleport_bundle  circuits.qpy same bytes (048b89012715); manifest apart from 'written' same; fields only in the second: ['broadcast']
+ALL SAME
