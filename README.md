@@ -115,6 +115,16 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 | `psf_os.grid3d` (prototype) | `psf-os run3d`: kicked Ising on an L x M x N cubic lattice placed by fixed rules (lattice rows on heavy-hex rows, bonds through the bridge qubits, an odd-even sort of rows), floor and mirror in the same job, read with `result2d`; correct without noise; costs several times what a search-based router needs (see psf-os-lab-notebook `notes/os3d_2026-11-06`) |
 | `psf_os.dual`, `psf_os.kim`, `psf_os.ising2d` | the practice problems P4, P5, P6 as modules, with their exact answers |
 
+## Real-time control (0.2.0, in preparation)
+
+| module | does |
+|---|---|
+| `psf_os.feedforward` | circuits with mid-circuit measurements and conditional operations decided while the circuit runs: placed on a rule-C chain with an off arm (no conditionals) and a floor arm in the same job; repeat-until-success chains; conditions on one bit or on a whole register (a table look-up, at most 32 bits); bundles and packed fixed arms; the broadcasts of a job recorded in its manifest |
+| `psf_os.loop` | a night of rounds: each round's scores choose the next round's prescription (R1 overshoot, R2 frames, the rungs +M then +F, R3 stop-loss), a ledger used only on the same device with the same calibration time, the device path end to end (fetch, submit, collect, zip), `resume` without a second submission, `verify` from the records |
+
+The experiment a loop runs is given from outside (circuits, scores, the first rule); the lab notebook's `gpu/os_loop.py`
+is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Added 2026-11-07 to 2026-11-13 (in 0.1.0)
 
 | module | does |
@@ -194,7 +204,7 @@ in the job's record at build time and scored by `psf-os result`.
 
 ## Not yet
 
-A declared self-repair test, the spread from day to day, the Rust core (M8), a resident service; observables on the
+Real-time decoding beyond a table look-up (IBM runs no arithmetic in a circuit), a declared self-repair test, the spread from day to day, the Rust core (M8), a resident service; observables on the
 answer card (`psf_os.observables` is not yet used by the entrance); the twin and the special condition for 3D
 circuits. A job is never moved
 to another device ("stay"); a result from another device than the one the job was placed for is refused.
