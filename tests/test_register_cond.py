@@ -85,8 +85,12 @@ def test_rep3_job_end_to_end(tmp_path):
     b = man["broadcast"]
     assert b["conditionals"] == 4 * (5 + 2 + 5) and b["condition_bits"] == 4 * (8 + 2 + 8)
     assert b["max_conditionals_per_circuit"] == 5 and len(b["per_circuit"]) == rep["circuits"]
-    assert b["per_circuit"][names.index("ff_r1")] == dict(conditionals=5, condition_bits=8)
-    assert b["per_circuit"][names.index("ff_r1_off")] == dict(conditionals=2, condition_bits=2)
+    assert b["per_circuit"][names.index("ff_r1")] == dict(conditionals=5, condition_bits=8, broadcasts=1,
+                                                         broadcast_bits=2)     # s is sent once (the VS's check)
+    assert b["per_circuit"][names.index("ff_r1_off")] == dict(conditionals=2, condition_bits=2, broadcasts=2,
+                                                             broadcast_bits=2)
+    assert b["broadcasts"] == 4 * (1 + 2 + 1) and b["broadcast_bits"] == 4 * (2 + 2 + 2)
+    assert b["max_broadcasts_per_circuit"] == 2
     FF.run_local(out, seed=3)
     cards = FF.cards(out)
     for t in ("rn", "r0", "r1", "r2"):
@@ -291,6 +295,18 @@ def test_bundle_of_lookups_and_the_refusal_across_items(tmp_path):
 def test_broadcast_record_hand_count():
     a, b = FF.rep3_lookup(1), FF.teleport_test(3)
     rec = FF.broadcast_record([a, b, FF.strip_conditionals(a)])
-    assert rec["per_circuit"] == [dict(conditionals=5, condition_bits=8), dict(conditionals=3, condition_bits=3),
-                                  dict(conditionals=0, condition_bits=0)]
+    assert rec["per_circuit"] == [dict(conditionals=5, condition_bits=8, broadcasts=1, broadcast_bits=2),
+                                  dict(conditionals=3, condition_bits=3, broadcasts=3, broadcast_bits=3),
+                                  dict(conditionals=0, condition_bits=0, broadcasts=0, broadcast_bits=0)]
     assert rec["conditionals"] == 8 and rec["condition_bits"] == 11 and rec["max_conditionals_per_circuit"] == 5
+    assert rec["broadcasts"] == 4 and rec["broadcast_bits"] == 5 and rec["max_broadcasts_per_circuit"] == 3
+    # a register measured again after its broadcast is sent again
+    q, s = QuantumRegister(2, "q"), ClassicalRegister(1, "s")
+    qc = QuantumCircuit(q, s, ClassicalRegister(1, "c"))
+    qc.measure(0, 0)
+    with qc.if_test((s, 1)):
+        qc.x(1)
+    with qc.if_test((s, 1)):
+        qc.z(1)
+    r = FF.broadcast_record([qc])["per_circuit"][0]
+    assert (r["conditionals"], r["broadcasts"], r["broadcast_bits"]) == (2, 1, 1)

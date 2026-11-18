@@ -107,9 +107,10 @@ def rep3_lookup(error=None, feed_forward=True):
     data `error` (None, 0, 1 or 2); the parities a0 = d0 + d1, a1 = d1 + d2 measured into register s (s[0], s[1]); the
     look-up: s == 1 -> X d0, s == 3 -> X d1, s == 2 -> X d2 (three tests on one register); the ancillas reset by a
     conditional X on their own bit (single-bit tests); decoded back onto d0; then T and H on d0: noiselessly every shot
-    reads c = 000 (c[0] = d0, c[1] = d1, c[2] = d2). Without the look-up and the resets (feed_forward=False; the off
-    arm removes every conditional) an X on d0 reaches d0 before the T, so c[0] is right in half the shots; an X on d1
-    or d2, or an ancilla left at 1, ends on c[1] or c[2]."""
+    reads c = 000 (c[0] = d0, c[1] = d1, c[2] = d2). feed_forward=False removes the look-up and keeps the ancilla
+    resets (an off arm to give explicitly): an X on d0 then reaches d0 before the T, so c[0] is right in half the
+    shots, and an X on d1 or d2 ends on c[1] or c[2]. The default off arm (strip_conditionals) removes the resets too,
+    and an ancilla left at 1 then also acts in the decoding (with an X on d1 it happens to undo it)."""
     from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
     if error not in (None, 0, 1, 2):
         raise ValueError("error is None, 0, 1 or 2")
@@ -514,34 +515,60 @@ def walk(qc):
     return out
 
 
-BROADCAST_NOTE = ("recorded, not enforced (2026-11-18): IBM, Execute dynamic circuits: 'if you broadcast 60 bits each "
-                  "time, then the job can have approximately 300 broadcasts ... If you broadcast just one bit each "
-                  "time, however, then the job can have 2400 broadcasts'. Counted here: every if_else (top level and "
-                  "in blocks) as one conditional, and the bits its test reads (1 for a bit, the width for a register)")
+BROADCAST_NOTE = ("recorded, not enforced (2026-11-18): IBM, Execute dynamic circuits: the limit 'is a function of the "
+                  "number of broadcasts and the number of broadcasted bits in a job (not a circuit)'; 'if you "
+                  "broadcast 60 bits each time, then the job can have approximately 300 broadcasts ... If you "
+                  "broadcast just one bit each time, however, then the job can have 2400 broadcasts'. conditionals / "
+                  "condition_bits: every if_else (top level and in blocks) and the bits its test reads (1 for a bit, "
+                  "the width for a register), an upper bound. broadcasts / broadcast_bits: IBM's count as read by the "
+                  "workplace VS (notebook notes/seats_2026-11-18/broadcasts.py): a test is a new broadcast when a bit "
+                  "it reads was measured after that bit was last broadcast, and then all its bits are broadcast; "
+                  "tests of unchanged bits add nothing (our reading of the text, not IBM's code)")
 
 
 def broadcast_record(circuits):
-    """Per circuit and for the job: the number of conditionals and the bits their tests read (a record for the
-    manifest; nothing is refused by it)."""
+    """Per circuit and for the job: the number of conditionals and the bits their tests read (an upper bound), and
+    the broadcasts and broadcast bits by IBM's description as read in BROADCAST_NOTE (2026-11-18, after the workplace
+    VS's check: the look-up reads one register five times but broadcasts it once). A record for the manifest; nothing
+    is refused by it."""
+    def tested(op, cc):
+        cb = op.condition[0]
+        return [cc.find_bit(x).index for x in (cb if type(cb).__name__ == "ClassicalRegister" else [cb])]
+
     def count(cc):
         n = bits = 0
         for ins in cc.data:
             if ins.operation.name == "if_else":
-                cb = ins.operation.condition[0]
                 n += 1
-                bits += len(cb) if type(cb).__name__ == "ClassicalRegister" else 1
+                bits += len(tested(ins.operation, cc))
                 for b in ins.operation.blocks:
                     if b is not None:
                         bn, bb = count(b)
                         n, bits = n + bn, bits + bb
         return n, bits
+
+    def ibm(cc):
+        stamp, sent, bc, bb = {}, {}, 0, 0
+        for t, ins in enumerate(cc.data, 1):
+            if ins.operation.name == "measure":
+                stamp[cc.find_bit(ins.clbits[0]).index] = t
+            elif ins.operation.name == "if_else":
+                bits = tested(ins.operation, cc)
+                if any(stamp.get(b, 0) > sent.get(b, -1) for b in bits):
+                    bc, bb = bc + 1, bb + len(bits)
+                    for b in bits:
+                        sent[b] = t
+        return bc, bb
     per = []
     for c in circuits:
         n, bits = count(c)
-        per.append(dict(conditionals=n, condition_bits=bits))
+        bc, bb = ibm(c)
+        per.append(dict(conditionals=n, condition_bits=bits, broadcasts=bc, broadcast_bits=bb))
     return dict(per_circuit=per, conditionals=sum(p["conditionals"] for p in per),
                 condition_bits=sum(p["condition_bits"] for p in per),
-                max_conditionals_per_circuit=max((p["conditionals"] for p in per), default=0), note=BROADCAST_NOTE)
+                broadcasts=sum(p["broadcasts"] for p in per), broadcast_bits=sum(p["broadcast_bits"] for p in per),
+                max_conditionals_per_circuit=max((p["conditionals"] for p in per), default=0),
+                max_broadcasts_per_circuit=max((p["broadcasts"] for p in per), default=0), note=BROADCAST_NOTE)
 
 
 def cz_count(qc):
