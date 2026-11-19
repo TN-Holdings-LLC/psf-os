@@ -1,0 +1,15 @@
+PASS  R1 first: an overshoot with a gap against the frame gets P2+B, not F: P2+B (R1 overshoot -> P2 + B)
+PASS  R2 for a balanced stack: P2+B+Q2 (R2 frames -> +Q2)
+PASS  rungs after: HELPS with a gap gives +M first: P1+M (RM helps -> one more try (m 3) + M)
+PASS  then +F (base switched): P2+M+F (RF frame: Dr on q3 gap +0.190 (2 SE 0.012) against the P1 )
+PASS  rungs in the other order: +F first: P2+F (RF frame: Dr on q3 gap +0.190 (2 SE 0.012) against the P1 )
+PASS  F for P2 needs the reversed gap: P1+F (RF frame: Dr on q3 gap -0.050 (2 SE 0.012) against the P2 )
+PASS  no F without a gap: P1+M (R4 keep)
+PASS  no rung with B: P2+B (R4 keep)
+PASS  R3 takes F off and switches the base back: P1+M (R3 stop-loss: NOT SHOWN twice with the same stack -> P1+M)
+PASS  R3 takes M off: P1 (R3 stop-loss: NOT SHOWN twice with the same stack -> P1)
+PASS  a first NOT SHOWN does not stop the night (None)
+PASS  no change, no overshoot: fixed point
+PASS  round 4 of K 4 with a change pending: round limit (round limit K = 4)
+PASS  200 + 50 > 240: budget (budget: 200.0 + 50.0 > 240 s)
+14 checks, 0 FAIL
