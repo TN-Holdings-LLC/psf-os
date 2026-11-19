@@ -759,9 +759,24 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
 BUNDLE_GAP = 1
 
 
+def _gaps(gap, n_items):
+    """The sites skipped after each item but the last: an int >= 1 for every pair, or a list of n_items - 1 ints >= 1."""
+    if isinstance(gap, bool):
+        raise Refused(f"gap must be an integer >= 1 or a list of them (got {gap})")
+    if isinstance(gap, int):
+        if gap < 1:
+            raise Refused(f"gap must be an integer >= 1 (got {gap})")
+        return [gap] * (n_items - 1)
+    g = list(gap)
+    if len(g) != n_items - 1 or not all(isinstance(x, int) and not isinstance(x, bool) and x >= 1 for x in g):
+        raise Refused(f"gap as a list needs {n_items - 1} integers >= 1 (got {gap})")
+    return g
+
+
 def bundle_place(dev, sizes, gap=BUNDLE_GAP):
     """One rule-C chain of N sites and a segment per item: items laid in order on consecutive sites; after an item
-    `gap` sites are skipped, and further sites while the next item's first site would be joined by any coupler of the
+    `gap` sites are skipped (an int for every pair of neighbours, or a list of len(sizes) - 1 ints, one per pair:
+    2026-11-20, a third item further out than the second), and further sites while the next item's first site would be joined by any coupler of the
     device (working or failed) to a qubit of an earlier item. N is the smallest length that holds every item.
     Returns dict(chain, segments (chain positions), rule, start); Refused if no rule-C chain holds them."""
     from psf_os import chain as CH
@@ -769,7 +784,8 @@ def bundle_place(dev, sizes, gap=BUNDLE_GAP):
     for a, b in dev.all_couplers():
         adj.setdefault(a, set()).add(b)
         adj.setdefault(b, set()).add(a)
-    N = sum(sizes) + gap * (len(sizes) - 1)
+    gaps = _gaps(gap, len(sizes))
+    N = sum(sizes) + sum(gaps)
     while N <= dev.num_qubits:
         try:
             pl = CH.place(dev, N)
@@ -777,14 +793,14 @@ def bundle_place(dev, sizes, gap=BUNDLE_GAP):
             raise Refused(f"bundle of sizes {sizes}: no rule-C chain of {N} sites ({e})") from None
         ch = list(pl["chain"])
         segs, used, pos = [], set(), 0
-        for n in sizes:
+        for k, n in enumerate(sizes):
             while pos + n <= N and any(q in used or adj.get(q, set()) & used for q in ch[pos:pos + n]):
                 pos += 1
             if pos + n > N:
                 break
             segs.append(list(range(pos, pos + n)))
             used |= set(ch[pos:pos + n])
-            pos += n + gap
+            pos += n + (gaps[k] if k < len(gaps) else 0)
         if len(segs) == len(sizes):
             return dict(chain=ch, segments=segs, rule=pl["rule"], start=pl["start"])
         N += 1
@@ -944,8 +960,10 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
         raise Refused(f"a bundle holds two or more distinct sub-items with plain tags: {tags}")
     if bit_order is not None and sorted(bit_order) != sorted(tags):
         raise Refused(f"{tag}: bit_order must name every sub-item once: {bit_order} against {tags}")
-    if not isinstance(gap, int) or gap < 1:
-        raise Refused(f"{tag}: gap must be an integer >= 1 (got {gap})")
+    try:
+        _gaps(gap, len(items))
+    except Refused as e:
+        raise Refused(f"{tag}: {e}") from None
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
     with_cond = [t for t, p in zip(tags, prep) if p[0]["conditionals"]]
     if len(with_cond) >= 2 and not allow_conditional_neighbours:

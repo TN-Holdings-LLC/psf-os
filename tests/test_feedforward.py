@@ -591,3 +591,26 @@ def test_bundle_gap_and_bit_order(tmp_path):
         FF.build_bundle(dev, two, str(tmp_path / "x"), bit_order=["a"], **kw)
     with pytest.raises(FF.Refused, match="gap"):
         FF.build_bundle(dev, two, str(tmp_path / "y"), gap=0, **kw)
+
+
+def test_bundle_gap_per_pair(tmp_path):
+    """2026-11-20 (decoy test): gap may be a list, one int per pair of neighbours; [1, 1] is the int 1 byte for byte,
+    [1, 3] puts the third item three sites past the second and leaves the first two where gap 1 puts them."""
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(2, 1.1, m=2)
+    three = [("a", qc, sp), ("b", qc, sp), ("z", qc, sp)]
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24), allow_conditional_neighbours=True)
+    r1 = FF.build_bundle(dev, three, str(tmp_path / "g1"), gap=1, **kw)
+    rl = FF.build_bundle(dev, three, str(tmp_path / "gl"), gap=[1, 1], **kw)
+    for f in ("ff_pack.qpy", "ff_pack_off.qpy", "ff_pack_floor.qpy"):
+        assert open(str(tmp_path / "g1" / "runs" / f), "rb").read() == open(str(tmp_path / "gl" / "runs" / f), "rb").read()
+    r3 = FF.build_bundle(dev, three, str(tmp_path / "g13"), gap=[1, 3], **kw)
+    ch = r3["chain"]
+    pos = {t: [ch.index(q) for q in r3["items"][t]["chain"]] for t in ("a", "b", "z")}
+    assert pos["b"][0] - pos["a"][-1] - 1 == 1 and pos["z"][0] - pos["b"][-1] - 1 >= 3
+    two = FF.build_bundle(dev, three[:2], str(tmp_path / "two"), gap=1, **kw)
+    assert [r3["items"][t]["chain"] for t in ("a", "b")] == [two["items"][t]["chain"] for t in ("a", "b")]
+    assert json.load(open(str(tmp_path / "g13" / "job" / "manifest.json")))["bundle_gap"] == [1, 3]
+    for bad in ([1], [1, 0], [1, 2, 3], True):
+        with pytest.raises(FF.Refused, match="gap"):
+            FF.build_bundle(dev, three, str(tmp_path / f"x{len(str(bad))}{bad is True}"), gap=bad, **kw)
