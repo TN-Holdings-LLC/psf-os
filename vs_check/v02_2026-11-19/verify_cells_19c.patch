@@ -1,0 +1,25 @@
+diff --git a/a/psf_os/loop.py b/b/psf_os/loop.py
+index 4e0f27b..889fd65 100644
+--- a/a/psf_os/loop.py
++++ b/b/psf_os/loop.py
+@@ -605,6 +605,7 @@ def first_difference(a, b, path=""):
+ 
+ 
+ VERSION_KEYS = ("written", "env", "circuits_sha256", "qpy_sha256")
++CELL_VERSION_KEYS = ("qpy_sha256", "run_sha256")
+ 
+ 
+ def _split_digests(job_dir):
+@@ -640,6 +641,12 @@ def same_job(rec_job, new_job):
+     for m in (ma, mb):
+         for k in drop:
+             m.pop(k, None)
++        if how != "bytes":
++            # the per-cell byte hashes follow the versions too (2026-11-19, the workplace VS: a night built on one
++            # machine and verified on another read DIFFERENT on /cells[*]/run_sha256 with the same gates)
++            for cell in m.get("cells", []):
++                for k in CELL_VERSION_KEYS:
++                    cell.pop(k, None)
+     return first_difference(ma, mb), how
+ 
+ 
