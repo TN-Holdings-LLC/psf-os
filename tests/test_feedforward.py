@@ -549,7 +549,17 @@ def test_pack_fixed_on_tonights_pa_record_gives_the_same_ff_bytes(tmp_path):
     for t, _, _ in items:
         a = open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb").read()
         b = open(os.path.join(out, "runs", f"ff_{t}.qpy"), "rb").read()
-        assert a == b, t
+        if a[:7] == b[:7]:
+            assert a == b, t
+        else:
+            # 2026-11-19 (workplace): the QPY format byte follows the qiskit version (2.5.2 writes 17, 2.6.1 writes
+            # 18), so the bytes cannot be compared across versions; the same gates are then required instead, both
+            # files read by this qiskit (psf_os.gatehash, the conditional blocks included)
+            from qiskit import qpy
+            from psf_os.gatehash import circuits_hash
+            ca = qpy.load(open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb"))
+            cb = qpy.load(open(os.path.join(out, "runs", f"ff_{t}.qpy"), "rb"))
+            assert circuits_hash(ca) == circuits_hash(cb), t
 
 
 def test_bundle_gap_and_bit_order(tmp_path):
