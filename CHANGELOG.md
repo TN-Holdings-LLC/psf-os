@@ -1,6 +1,6 @@
 # Changelog
 
-## [number] ([date]; both set when it is published: the 0.2 release)
+## 0.2.0 (2026-11-19)
 
 Real-time control on IBM Heron: circuits that measure in the middle and act on the result while they run, the build
 rules the devices taught, and a loop of rounds that chooses each round's prescription from the previous round's
@@ -40,10 +40,11 @@ record's calibration time stamp only. Single builds of 0.1 jobs are unchanged.
 - Packaging: only `psf_os` is installed (`[tool.setuptools.packages.find]`); the repository's `vs_check/` holds the
   workplace VS's check scripts and is not part of the package.
 
-Tests: NNN passed, N skipped (with psf-os-lab-notebook checked out as `TOQB_DIR` and the optional pieces installed);
+Tests: 334 passed, 1 skipped (with psf-os-lab-notebook checked out as `TOQB_DIR` and the optional pieces installed);
 the heavy ones are marked (see the README).
 
-`.zenodo.json` links this release to paper 10 (doi:10.5281/zenodo.NNNNNNNN) as well.
+`.zenodo.json` links this release to papers 9 (doi:10.5281/zenodo.24278888) and 10 (doi:10.5281/zenodo.24367001) as
+well.
 
 ## 0.1.1 (2026-11-14)
 

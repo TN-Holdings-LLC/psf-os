@@ -10,8 +10,9 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** Release 0.1.1 (2026-11-14; the code of 0.1.0; changes in [`CHANGELOG.md`](CHANGELOG.md)). Archived on
-Zenodo: every release [10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (the latest), 0.1.1
+**Status.** Release 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop; changes in
+[`CHANGELOG.md`](CHANGELOG.md)). Archived on Zenodo: every release
+[10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (resolves to the latest), 0.1.1
 [10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
 their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook) (named TOQB until
 2026-11-12; the old links redirect); every device result below was declared (hash and time locked in git) before its
@@ -115,7 +116,7 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 | `psf_os.grid3d` (prototype) | `psf-os run3d`: kicked Ising on an L x M x N cubic lattice placed by fixed rules (lattice rows on heavy-hex rows, bonds through the bridge qubits, an odd-even sort of rows), floor and mirror in the same job, read with `result2d`; correct without noise; costs several times what a search-based router needs (see psf-os-lab-notebook `notes/os3d_2026-11-06`) |
 | `psf_os.dual`, `psf_os.kim`, `psf_os.ising2d` | the practice problems P4, P5, P6 as modules, with their exact answers |
 
-## Real-time control (0.2.0, in preparation)
+## Real-time control (0.2.0)
 
 | module | does |
 |---|---|
