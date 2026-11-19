@@ -549,12 +549,12 @@ def test_pack_fixed_on_tonights_pa_record_gives_the_same_ff_bytes(tmp_path):
     for t, _, _ in items:
         a = open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb").read()
         b = open(os.path.join(out, "runs", f"ff_{t}.qpy"), "rb").read()
-        if a[:7] == b[:7]:
-            assert a == b, t
-        else:
-            # 2026-11-19 (workplace): the QPY format byte follows the qiskit version (2.5.2 writes 17, 2.6.1 writes
-            # 18), so the bytes cannot be compared across versions; the same gates are then required instead, both
-            # files read by this qiskit (psf_os.gatehash, the conditional blocks included)
+        if a != b:
+            # 2026-11-19 (workplace, and the workplace VS's check): the bytes follow the versions that wrote them (the
+            # QPY format: qiskit 2.5.2 writes 17, 2.6.1 writes 18; an angle's last digit, 1.8e-15 at most, with another
+            # numpy / Python), so across machines the same gates are required instead, both files read by this qiskit
+            # (psf_os.gatehash: parameters to 1e-10, the conditional blocks included). On the machine that wrote the
+            # records the bytes are equal and this branch is not taken
             from qiskit import qpy
             from psf_os.gatehash import circuits_hash
             ca = qpy.load(open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb"))
