@@ -384,7 +384,11 @@ class Night:
                                  "resume after it is written", resumable=True)
             return self.stop(f"{name}: not finished after {COLLECT_WAIT_MIN} min; run resume", resumable=True)
         if st != "DONE":
-            return self.stop(f"{name}: the job ended {st}")
+            # 2026-11-19 (the workplace VS): only a failed job ends the night; any other state (UNKNOWN, a result not
+            # fetched, a dropped connection) stops it resumably: a job holding a submission.json is never sent again
+            if st.startswith("FAILED"):
+                return self.stop(f"{name}: the job ended {st}")
+            return self.stop(f"{name}: the job's state is {st}; run resume after checking it", resumable=True)
         _quiet(score, os.path.join(folder, "score.txt"), folder)
         self.log(f"{name}: scored")
         return True
@@ -605,6 +609,7 @@ def first_difference(a, b, path=""):
 
 
 VERSION_KEYS = ("written", "env", "circuits_sha256", "qpy_sha256")
+CELL_VERSION_KEYS = ("qpy_sha256", "run_sha256")
 
 
 def _split_digests(job_dir):
@@ -629,8 +634,11 @@ def same_job(rec_job, new_job):
     b = open(os.path.join(new_job, "circuits.qpy"), "rb").read()
     how = "bytes"
     if a != b:
-        ta, sa = _split_digests(rec_job)
-        tb, sb = _split_digests(new_job)
+        try:
+            ta, sa = _split_digests(rec_job)
+            tb, sb = _split_digests(new_job)
+        except Exception as exc:  # noqa: BLE001 - e.g. a QPY format newer than this qiskit reads (2026-11-19)
+            return f"cannot be read here ({type(exc).__name__}: {str(exc)[:160]})", "unreadable"
         if ta != tb:
             return "test circuits differ (gates)", "gates"
         how = "test circuits' gates (the bytes differ: other versions)" + (
@@ -640,6 +648,12 @@ def same_job(rec_job, new_job):
     for m in (ma, mb):
         for k in drop:
             m.pop(k, None)
+        if how != "bytes":
+            # the per-cell byte hashes follow the versions too (2026-11-19, the workplace VS: a night built on one
+            # machine and verified on another read DIFFERENT on /cells[*]/run_sha256 with the same gates)
+            for cell in m.get("cells", []):
+                for k in CELL_VERSION_KEYS:
+                    cell.pop(k, None)
     return first_difference(ma, mb), how
 
 
@@ -650,10 +664,18 @@ def verify(out, exp, resim=False):
     devdir = os.path.join(out, "fetch_in", cfg["device"], "dev")
     lines, bad = [], []
 
+    unchecked = []
+
     def note(what, diff):
         how = None
         if isinstance(diff, tuple):
             diff, how = diff
+        if how == "unreadable":
+            # not a difference and not the same: this machine cannot read the record (verify with a qiskit at least
+            # as new as the one that wrote it)
+            lines.append(f"NOT CHECKED {what}: {diff}")
+            unchecked.append(what)
+            return
         tail = f": {diff}" if diff is not None else (f" ({how})" if how and how != "bytes" else "")
         lines.append(f"{'SAME     ' if diff is None else 'DIFFERENT'} {what}" + tail)
         if diff is not None:
@@ -741,5 +763,10 @@ def verify(out, exp, resim=False):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\n".join(lines))
-    print("SAME" if not bad else f"DIFFERENT ({len(bad)}: {', '.join(bad)})")
-    return not bad
+    if bad:
+        print(f"DIFFERENT ({len(bad)}: {', '.join(bad)})")
+    elif unchecked:
+        print(f"NOT CHECKED ({len(unchecked)}: {', '.join(unchecked)}); the rest SAME")
+    else:
+        print("SAME")
+    return not bad and not unchecked

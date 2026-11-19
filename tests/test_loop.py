@@ -281,7 +281,8 @@ def _job(d, circs, roles, version=None):
     os.makedirs(d)
     with open(os.path.join(d, "circuits.qpy"), "wb") as f:
         qpy.dump(circs, f, **({"version": version} if version else {}))
-    cells = [dict(name=f"c{i}", role=r, points=1) for i, r in enumerate(roles)]
+    cells = [dict(name=f"c{i}", role=r, points=1, run_sha256=f"{version}-{i}", qpy_sha256=f"{version}") for i, r in
+             enumerate(roles)]                                   # per-cell byte hashes that follow the versions
     json.dump(dict(written="t", cells=cells, env={"x": version}), open(os.path.join(d, "manifest.json"), "w"))
 
 
@@ -317,3 +318,17 @@ def test_same_job_across_versions_and_the_sentinel_apart(tmp_path):
     assert d is None and "sentinel differs (beside" in how
     _job(str(tmp_path / "g"), [circ(0.3, cond=False), circ(math.pi)], roles)  # a test circuit differs
     assert LP.same_job(str(tmp_path / "a"), str(tmp_path / "g"))[0] == "test circuits differ (gates)"
+
+
+def test_run_job_stops_resumably_unless_failed(tmp_path, devdir, monkeypatch):
+    """Only FAILED ends the night; UNKNOWN or a result not fetched stops it resumably (the workplace VS, 19c)."""
+    for i, (st, resumable) in enumerate((("FAILED (ERROR)", False), ("UNKNOWN (SOMETHING)", True),
+                                         ("UNKNOWN (DONE but no raw_counts.json)", True))):
+        out = str(tmp_path / f"n{i}")
+        n = LP.start(out, Fake(), dry_devdir=devdir)
+        folder = os.path.join(out, "x")
+        os.makedirs(os.path.join(folder, "job"))
+        json.dump({}, open(os.path.join(folder, "job", "submission.json"), "w"))
+        monkeypatch.setattr(n, "collect", lambda f, st=st: st)
+        r = n.run_job(folder, lambda f: True, lambda f: None)
+        assert r["resumable"] is resumable, st
