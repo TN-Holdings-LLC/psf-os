@@ -164,6 +164,7 @@ def test_swap_bond_identity_and_merge_saves_cz():
     assert G.exact_placed_check(qc, placed, used, 4, 2, 2, 2, 0.8) < 1e-9
 
 
+@pytest.mark.slow
 def test_excited_probe_sees_a_fast_relaxing_qubit(tmp_path):
     # a qubit that relaxes fast leaves the |0> floor at +1 (as q29 on 11-06) but pulls the |1> floor up: only the
     # excited probe passes the candidate over

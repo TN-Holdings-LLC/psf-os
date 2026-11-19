@@ -95,6 +95,7 @@ def test_p6_placement_unchanged(name, couplers, qubits):
     assert same(dev)
 
 
+@pytest.mark.slow
 def test_p6_placement_unchanged_random_marks():
     rnd = random.Random(20261104)
     base = Dv.fetch_fake("FakeKingston")

@@ -39,6 +39,7 @@ def _on_ring(ring, e):
     return any({ring[j], ring[(j + 1) % n]} == set(e) for j in range(n))
 
 
+@pytest.mark.slow
 def test_planted_defects_are_listed_and_avoided(tmp_path):
     dev = Dv.fetch_fake("FakeFez")
     now = P.now_cet()

@@ -24,3 +24,6 @@ include = ["psf_os*"]                # vs_check/ (the workplace VS's check scrip
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "slow: 20 s or more on a 2-core machine (after 2026-11-19: the full suite took 23 min, 10 of it one test); skip with -m 'not slow'",
+]

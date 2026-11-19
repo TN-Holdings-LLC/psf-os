@@ -402,6 +402,7 @@ def test_bundle_time_model_counts_three_arms_and_the_sentinel(tmp_path):
     assert reps[0]["qpu_seconds_model"] == reps[1]["qpu_seconds_model"]
 
 
+@pytest.mark.slow
 def test_run_local_splits_a_large_bundle_into_independent_parts(tmp_path):
     dev = Dv.fetch_fake("FakeFez")
     qc, sp = FF.rus_chain(1, 1.1, m=3)
@@ -443,6 +444,7 @@ def _pack_items():
     return out
 
 
+@pytest.mark.slow
 def test_pack_fixed_matches_the_single_build(tmp_path):
     dev = Dv.fetch_fake("FakeMarrakesh")
     items = _pack_items()

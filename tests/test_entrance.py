@@ -209,6 +209,7 @@ def test_cli_check_and_build(tmp_path, capsys):
 TOQB = os.environ.get("TOQB_DIR")
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not TOQB, reason="needs TOQB_DIR (the notebook's device records and gpu/hub_build.py)")
 def test_chain_of_equals_the_notebook_builder_on_every_record():
     sys.path.insert(0, os.path.join(TOQB, "gpu"))

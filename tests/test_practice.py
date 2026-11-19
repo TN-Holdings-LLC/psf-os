@@ -57,6 +57,7 @@ def _solve(dev, job, out, standard=True, reg=None, now=None, mode="noiseless", *
                                  dict(kind="cluster_parity", n=20),
                                  dict(kind="kising_forward", n=20, L=4),
                                  dict(kind="kising_forward", n=20, L=8)], ids=lambda j: f"{j['kind']}-{j['n']}")
+@pytest.mark.slow
 def test_q2_full_score_without_noise(tmp_path, job):
     dev = Dv.fetch_fake("FakeFez")
     rep, r = _solve(dev, dict(job, shots=2000), str(tmp_path / "p"))
@@ -72,6 +73,7 @@ def test_q2_full_score_without_noise(tmp_path, job):
         assert r["mse"] < 0.005  # shot noise only: about 1 / shots per site
 
 
+@pytest.mark.slow
 def test_q3_planted_defects_standard_against_avoiding(tmp_path):
     """As T3, with one change: the planted error is two-qubit depolarizing (probability 0.15 after each CZ on three
     planted couplers) instead of ZZ, because a ZZ error keeps the parity that P2 reads and so cannot test it. Two

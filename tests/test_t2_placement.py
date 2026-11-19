@@ -70,6 +70,7 @@ def fake(request, tmp_path_factory):
     return request.param, str(d), fetch_fake(request.param)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("n", SIZES)
 def test_same_ring_as_toqb(fake, n):
     from psf_os import allocate as A

@@ -158,7 +158,9 @@ any of them is the owner's decision.
 ## Tests
 
 `TOQB_DIR=<psf-os-lab-notebook checkout> python -m pytest -q` (the variable keeps the notebook's old name; 0.1.0:
-286 passed, 1 skipped, with the notebook checked out and the optional pieces installed)
+286 passed, 1 skipped, with the notebook checked out and the optional pieces installed). On a 2-core machine the
+whole suite takes about 23 minutes, 10 of them one test; `-m "not slow"` leaves out the 23 tests marked `slow` (20 s
+or more each), and `PSF_OS_HEAVY=1` adds the one heavy tensor-network test, skipped by default.
 
 | test | what it checks |
 |---|---|
