@@ -520,7 +520,9 @@ class Night:
         if led and not os.path.exists(os.path.join(self.out, "ledger_written")):
             R1 = json.load(open(os.path.join(self.out, "RULE1.json"))) if os.path.exists(
                 os.path.join(self.out, "RULE1.json")) else {}
-            e = ledger_entry(os.path.basename(self.out), c["device"], R1.get("calibration_time"), c["rungs"], rounds,
+            # the night's name carries its date (after 2026-11-19, the workplace VS: OUT folders named alike, e.g.
+            # ".../loop" every night, gave lines no one could tell apart)
+            e = ledger_entry(f"{os.path.basename(self.out)}@{now()[:10]}", c["device"], R1.get("calibration_time"), c["rungs"], rounds,
                              R1.get("ledger", {}))
             json.dump(ledger_load(led) + [e], open(led, "w"), indent=1, default=str)
             open(os.path.join(self.out, "ledger_written"), "w").write(now() + "\n")

@@ -18,6 +18,9 @@ tn = ["quimb", "cotengra"]          # psf_os.exact_tn; kahypar (optional) gives 
 [project.scripts]
 psf-os = "psf_os.cli:main"
 
+[tool.setuptools.packages.find]
+include = ["psf_os*"]                # vs_check/ (the workplace VS's check scripts) is not part of the package
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
