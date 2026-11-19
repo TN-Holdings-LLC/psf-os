@@ -299,6 +299,7 @@ class Night:
         except Exception as exc:  # noqa: BLE001 - a failed read is recorded, never fatal
             d = dict(read=dt.datetime.now(dt.timezone.utc).isoformat(), error=type(exc).__name__, after=tag)
         json.dump(d, open(os.path.join(self.out, tag, "queue_after.json"), "w"), indent=1)
+        json.dump(d, open(os.path.join(self.out, f"queue_after_{tag}.json"), "w"), indent=1)
 
     def collect(self, folder):
         job = os.path.join(folder, "job")
@@ -311,7 +312,17 @@ class Night:
         self.log(f"{os.path.basename(folder)}: collect -> {r.stdout.strip()} {r.stderr.strip()}")
         if os.path.exists(os.path.join(job, "raw_counts.json")):
             return "DONE"
-        return "ERROR" if any(x in r.stdout.upper() for x in ("ERROR", "CANCEL")) else "WAIT"
+        # 2026-11-19: the job's state as a value (psf_os.ibm.collect writes job/collect_status.json), not a word
+        # looked for in printed text; a state not known is not taken for a pending job
+        cs = _read(os.path.join(job, "collect_status.json"))
+        if cs is None:
+            return "UNKNOWN (no collect_status.json: " + (r.stderr.strip() or r.stdout.strip())[-200:] + ")"
+        state = cs.get("state")
+        if state == "WAIT":
+            return "WAIT"
+        if state == "DONE":
+            return "UNKNOWN (DONE but no raw_counts.json)"
+        return f"{state} ({cs.get('status')})"
 
     # ---------------------------------------------------------------------------------------------- steps
     def fetch(self):
@@ -368,6 +379,9 @@ class Night:
                 return self.stop(f"{name}: submission refused or failed (see run_log.txt)")
         st = self.collect(folder)
         if st == "WAIT":
+            if self.cfg()["dry"]:
+                return self.stop(f"{name}: the dry run has no result for this job (simulation output missing); run "
+                                 "resume after it is written", resumable=True)
             return self.stop(f"{name}: not finished after {COLLECT_WAIT_MIN} min; run resume", resumable=True)
         if st != "DONE":
             return self.stop(f"{name}: the job ended {st}")
@@ -488,8 +502,15 @@ class Night:
         for d in [t for t, *_ in self.exp.diagnostics()] + names:
             p = os.path.join(self.out, d)
             if os.path.isdir(p):
-                rows[d] = dict(submission=_read(os.path.join(p, "job", "submission.json")),
+                sub = _read(os.path.join(p, "job", "submission.json")) or {}
+                raw = _read(os.path.join(p, "job", "raw_counts.json")) or {}
+                bj = _read(os.path.join(p, "build.json")) or {}
+                rows[d] = dict(job_id=sub.get("job_id"), submitted=sub.get("submitted"), fetched=raw.get("fetched"),
+                               status=raw.get("status"), qpu_seconds_model=bj.get("qpu_seconds_model"),
+                               metrics=sub.get("metrics") or raw.get("metrics"),
                                queue_after=_read(os.path.join(p, "queue_after.json")))
+        rows["queue_before"] = None if c["dry"] else _read(os.path.join(self.out, "fetch_in", "queue.json"))
+        rows["model_seconds_total"] = self.spent()
         json.dump(rows, open(os.path.join(self.out, "job_timing.json"), "w"), indent=1)
         led = c.get("ledger")
         if led and not os.path.exists(os.path.join(self.out, "ledger_written")):
@@ -547,7 +568,8 @@ def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=
     if not dry_devdir and not zip_path:
         raise SystemExit("a zip file is required for a device run")
     os.makedirs(out)
-    cfg = dict(dry=bool(dry_devdir), dry_devdir=os.path.abspath(dry_devdir) if dry_devdir else None, noise=noise,
+    from psf_os import job as J
+    cfg = dict(build_env=J.build_env(), dry=bool(dry_devdir), dry_devdir=os.path.abspath(dry_devdir) if dry_devdir else None, noise=noise,
                k_max=k_max or exp.k_max, budget=budget or exp.budget_s, rungs=list(rungs),
                ledger=os.path.abspath(ledger) if ledger else None, zip=os.path.abspath(zip_path) if zip_path else None,
                started=now(), device=None, experiment=exp.name, **(extra or {}))
@@ -582,15 +604,43 @@ def first_difference(a, b, path=""):
     return None if a == b else f"{path}: {a!r} != {b!r}"
 
 
+VERSION_KEYS = ("written", "env", "circuits_sha256", "qpy_sha256")
+
+
+def _split_digests(job_dir):
+    """(digest of the test circuits, digest of the sentinel's), by the manifest's roles."""
+    from qiskit import qpy
+    from psf_os.gatehash import circuits_digest
+    man = json.load(open(os.path.join(job_dir, "manifest.json")))
+    roles = [cell["role"] for cell in man["cells"] for _ in range(cell["points"])]
+    cs = qpy.load(open(os.path.join(job_dir, "circuits.qpy"), "rb"))
+    return (circuits_digest([c for c, r in zip(cs, roles) if r != "sentinel"]),
+            circuits_digest([c for c, r in zip(cs, roles) if r == "sentinel"]))
+
+
 def same_job(rec_job, new_job):
-    """circuits.qpy byte for byte; manifest.json equal but for its 'written' time and the build environment."""
-    if open(os.path.join(rec_job, "circuits.qpy"), "rb").read() != open(os.path.join(new_job, "circuits.qpy"),
-                                                                         "rb").read():
-        return "circuits.qpy differs"
+    """(difference or None, how). circuits.qpy byte for byte; when the bytes differ (another qiskit / numpy / Python
+    writes other bytes for the same circuits: the QPY format, an angle's last digits) the gates are compared instead
+    (psf_os.gatehash.circuits_digest: conditional blocks opened, RZ in (-pi, pi], parameters to 1e-10), the test
+    circuits and the ring sentinel apart: the sentinel's one-qubit synthesis follows the qiskit-aer / numpy versions
+    (2026-11-18), so a sentinel that differs only so is reported beside and is not a difference of the job. The
+    manifest must agree but for its time, its build environment and, when the bytes differ, the byte hashes."""
+    a = open(os.path.join(rec_job, "circuits.qpy"), "rb").read()
+    b = open(os.path.join(new_job, "circuits.qpy"), "rb").read()
+    how = "bytes"
+    if a != b:
+        ta, sa = _split_digests(rec_job)
+        tb, sb = _split_digests(new_job)
+        if ta != tb:
+            return "test circuits differ (gates)", "gates"
+        how = "test circuits' gates (the bytes differ: other versions)" + (
+            "" if sa == sb else "; the ring sentinel differs (beside, not judged)")
     ma, mb = (json.load(open(os.path.join(x, "manifest.json"))) for x in (rec_job, new_job))
+    drop = VERSION_KEYS if how != "bytes" else ("written", "env")
     for m in (ma, mb):
-        m.pop("written", None)
-    return first_difference(ma, mb)
+        for k in drop:
+            m.pop(k, None)
+    return first_difference(ma, mb), how
 
 
 def verify(out, exp, resim=False):
@@ -601,7 +651,11 @@ def verify(out, exp, resim=False):
     lines, bad = [], []
 
     def note(what, diff):
-        lines.append(f"{'SAME     ' if diff is None else 'DIFFERENT'} {what}" + ("" if diff is None else f": {diff}"))
+        how = None
+        if isinstance(diff, tuple):
+            diff, how = diff
+        tail = f": {diff}" if diff is not None else (f" ({how})" if how and how != "bytes" else "")
+        lines.append(f"{'SAME     ' if diff is None else 'DIFFERENT'} {what}" + tail)
         if diff is not None:
             bad.append(what)
 

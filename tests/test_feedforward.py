@@ -556,10 +556,10 @@ def test_pack_fixed_on_tonights_pa_record_gives_the_same_ff_bytes(tmp_path):
             # (psf_os.gatehash: parameters to 1e-10, the conditional blocks included). On the machine that wrote the
             # records the bytes are equal and this branch is not taken
             from qiskit import qpy
-            from psf_os.gatehash import circuits_hash
+            from psf_os.gatehash import circuits_digest
             ca = qpy.load(open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb"))
             cb = qpy.load(open(os.path.join(out, "runs", f"ff_{t}.qpy"), "rb"))
-            assert circuits_hash(ca) == circuits_hash(cb), t
+            assert circuits_digest(ca) == circuits_digest(cb), t   # blocks opened (gatehash draws them as text)
 
 
 def test_bundle_gap_and_bit_order(tmp_path):

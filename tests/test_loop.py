@@ -229,7 +229,7 @@ def test_resume_never_submits_twice(tmp_path, devdir):
     out = str(tmp_path / "p")
     exp = Fake(pending_first=True)
     res = LP.start(out, exp, dry_devdir=devdir).go()
-    assert res["resumable"] and "not finished" in res["reason"] and exp.simulated == ["dw", "r1"]
+    assert res["resumable"] and "dry run has no result" in res["reason"] and exp.simulated == ["dw", "r1"]
     res = LP.Night(out, exp).go()                                         # still pending: not sent again
     assert res["resumable"] and exp.simulated == ["dw", "r1"]
     json.dump(dict(rows=[dict(pub=0, counts={"n": 100 + 1001 % 7})]),
@@ -247,3 +247,73 @@ def test_start_refuses(tmp_path, devdir):
     os.makedirs(tmp_path / "c")
     with pytest.raises(SystemExit, match="exists"):
         LP.start(str(tmp_path / "c"), Fake(), dry_devdir=devdir)
+
+
+# ------------------------------------------------------------------------------------------------ 2026-11-19 (19c)
+
+def test_job_state_by_value():
+    from psf_os import ibm
+    assert [ibm.job_state(x) for x in ("DONE", "JobStatus.DONE", "QUEUED", "RUNNING", "ERROR", "CANCELLED",
+                                       "Cancelled", "weird")] == ["DONE", "DONE", "WAIT", "WAIT", "FAILED", "FAILED",
+                                                                 "FAILED", "UNKNOWN"]
+
+
+def test_collect_reads_the_state_as_a_value(tmp_path, devdir, monkeypatch):
+    """Device path: collect_status.json decides; a state not known is not taken for a pending job."""
+    out = str(tmp_path / "d")
+    n = LP.start(out, Fake(), zip_path=str(tmp_path / "z.zip"))
+    folder = os.path.join(out, "r1")
+    os.makedirs(os.path.join(folder, "job"))
+
+    def fake_run(state, status):
+        def run(cmd, **k):
+            json.dump(dict(state=state, status=status), open(os.path.join(folder, "job", "collect_status.json"), "w"))
+            return type("R", (), dict(stdout=f"status {status}; run collect again later", stderr="", returncode=0))()
+        return run
+    for state, status, want in (("WAIT", "QUEUED", "WAIT"), ("FAILED", "ERROR", "FAILED (ERROR)"),
+                                ("UNKNOWN", "SOMETHING", "UNKNOWN (SOMETHING)")):
+        monkeypatch.setattr(LP.subprocess, "run", fake_run(state, status))
+        assert n.collect(folder) == want
+
+
+def _job(d, circs, roles, version=None):
+    from qiskit import qpy
+    os.makedirs(d)
+    with open(os.path.join(d, "circuits.qpy"), "wb") as f:
+        qpy.dump(circs, f, **({"version": version} if version else {}))
+    cells = [dict(name=f"c{i}", role=r, points=1) for i, r in enumerate(roles)]
+    json.dump(dict(written="t", cells=cells, env={"x": version}), open(os.path.join(d, "manifest.json"), "w"))
+
+
+def test_same_job_across_versions_and_the_sentinel_apart(tmp_path):
+    import math
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+    from qiskit import qpy
+
+    def circ(theta, cond=True):
+        qc = QuantumCircuit(QuantumRegister(2, "q"), ClassicalRegister(2, "c"), name="c")   # a fixed name: equal bytes
+        qc.rz(theta, 0)
+        qc.sx(0)
+        qc.measure(0, 0)
+        if cond:
+            with qc.if_test((qc.clbits[0], 1)):
+                qc.x(1)
+        qc.measure(1, 1)
+        return qc
+    roles = ["user", "sentinel"]
+    v_old = max(10, qpy.QPY_COMPATIBILITY_VERSION) if hasattr(qpy, "QPY_COMPATIBILITY_VERSION") else None
+    _job(str(tmp_path / "a"), [circ(0.3), circ(math.pi)], roles)
+    _job(str(tmp_path / "b"), [circ(0.3), circ(math.pi)], roles)
+    assert LP.same_job(str(tmp_path / "a"), str(tmp_path / "b")) == (None, "bytes")
+    if v_old:                                                   # another QPY format: other bytes, the same gates
+        _job(str(tmp_path / "c"), [circ(0.3), circ(math.pi)], roles, version=v_old)
+        d, how = LP.same_job(str(tmp_path / "a"), str(tmp_path / "c"))
+        assert d is None and how.startswith("test circuits' gates")
+    _job(str(tmp_path / "e"), [circ(0.3 + 1e-14), circ(-math.pi)], roles)   # last digits; pi written as -pi
+    d, how = LP.same_job(str(tmp_path / "a"), str(tmp_path / "e"))
+    assert d is None and "sentinel differs" not in how
+    _job(str(tmp_path / "f"), [circ(0.3), circ(1.0)], roles)                 # the sentinel alone differs
+    d, how = LP.same_job(str(tmp_path / "a"), str(tmp_path / "f"))
+    assert d is None and "sentinel differs (beside" in how
+    _job(str(tmp_path / "g"), [circ(0.3, cond=False), circ(math.pi)], roles)  # a test circuit differs
+    assert LP.same_job(str(tmp_path / "a"), str(tmp_path / "g"))[0] == "test circuits differ (gates)"

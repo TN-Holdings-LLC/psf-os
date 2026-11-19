@@ -144,6 +144,22 @@ def submit(svc, job_dir, sampler_cls=None):
     return job.job_id()
 
 
+JOB_STATES_WAIT = ("INITIALIZING", "QUEUED", "VALIDATING", "RUNNING")
+JOB_STATES_FAILED = ("ERROR", "CANCELLED", "CANCELED", "FAILED")
+
+
+def job_state(status):
+    """DONE / WAIT / FAILED / UNKNOWN from a runtime job status (an enum or its text, e.g. 'JobStatus.DONE')."""
+    st = str(getattr(status, "name", status)).upper().split(".")[-1].strip()
+    if st == "DONE":
+        return "DONE"
+    if st in JOB_STATES_WAIT:
+        return "WAIT"
+    if st in JOB_STATES_FAILED:
+        return "FAILED"
+    return "UNKNOWN"
+
+
 def collect(svc, job_dir, wait_s=0, poll_s=30):
     """Write raw_counts.json when the job is done (TOQB's format, so either side can score it). Returns the status."""
     sub = json.load(open(os.path.join(job_dir, "submission.json")))
@@ -157,6 +173,10 @@ def collect(svc, job_dir, wait_s=0, poll_s=30):
         if any(x in st.upper() for x in ("DONE", "ERROR", "CANCEL")) or time.time() >= t_end:
             break
         time.sleep(poll_s)
+    # 2026-11-19 (the loop's first device night): the status is also written as a value, so that a caller need not
+    # read it from printed text (psf_os.loop reads job/collect_status.json)
+    json.dump(dict(status=st, state=job_state(st), read=_stamp(), job_id=sub["job_id"]),
+              open(os.path.join(job_dir, "collect_status.json"), "w"), indent=1)
     if "DONE" not in st.upper():
         return st
     res = job.result()

@@ -25,7 +25,11 @@ Nothing reads a calibration quality number. Single builds of 0.1 jobs are unchan
   same device with the same calibration time, per key only where tonight's diagnostics agree), and the night runner
   (fetch, diagnostics, rounds with the budget checked before a round is built, check, submit, collect, score, rule;
   resume never sends a job twice; verify rebuilds, re-scores and re-rules: SAME / DIFFERENT). The experiment (circuits,
-  scores, first rule) is given from outside; the notebook's `gpu/os_loop.py` is the one for the RUS chain.
+  scores, first rule) is given from outside; the notebook's `gpu/os_loop.py` is the one for the RUS chain. After the
+  review of 2026-11-19: verify compares the gates when the bytes differ (another qiskit / numpy / Python), the test
+  circuits and the ring sentinel apart (`gatehash.circuits_digest`: conditional blocks opened, RZ in (-pi, pi]);
+  `psf_os.ibm.collect` writes the job's state as a value (`collect_status.json`, `ibm.job_state`) and the loop reads
+  it (a state not known is not taken for a pending job); a dry night's missing result is said as such.
 
 `.zenodo.json` links releases to paper 8 as well (10.5281/zenodo.24136512, 2026-11-11), which also used psf-os.
 
