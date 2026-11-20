@@ -216,7 +216,8 @@ def footprint_or_none(qc, span=True):
         f = wait_footprint(qc, span=span)
     except ValueError as e:
         return dict(counted=False, why=str(e))
-    return dict(counted=True, max=f["max"], total=f["total"], carriers=[w["carriers"] for w in f["waits"]])
+    return dict(counted=True, max=f["max"], total=f["total"], excited=round(f["excited_waits"], 6),
+                carriers=[w["carriers"] for w in f["waits"]])
 
 
 def main(argv=None):
