@@ -751,8 +751,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     ring did not hold the qubits that carried IPE); the manifest and the build report record sentinel_cover (asked,
     covered, all). Nothing is refused when the cover is partial: it is recorded.
     fence (after-2026-11-20, the workplace VS's finding; default False: as before, byte for byte): every item's ff and
-    off arms get a barrier on every qubit before each mid-circuit measurement group and after each run of
-    conditionals (psf_os.footprint.fence_waits) before compiling, so that the compiler cannot merge gates across a
+    off arms get a barrier on every qubit before each mid-circuit measurement group, before each run of conditionals
+    that does not follow a read, and after each run of conditionals (psf_os.footprint.fence_waits, conditionals=True:
+    the workplace VS's その6) before compiling, so that the compiler cannot merge gates across a
     wait (on the compiled IPE the target otherwise waited in a superposition). The records carry fence=True.
     record_checks (after-2026-11-20, home's three conditions; default "record"): every build also writes OUT/checks.json,
     beside the job and outside it (job/, runs/ and build.json are byte for byte as without it, so every recorded
@@ -786,7 +787,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         a, qc, off, succ, spec = _prepare(tag, qc, spec)
         if fence:
             from psf_os.footprint import fence_waits
-            qc, off = fence_waits(qc), fence_waits(off)
+            qc, off = fence_waits(qc, conditionals=True), fence_waits(off, conditionals=True)
         try:
             pl = given_chain(dev, chains[tag], a["n"]) if tag in chains else place(dev, a["n"])
         except Refused as e:
@@ -819,7 +820,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                 # VS, 2026-11-20: the compiler can merge gates across a wait, so the written count can be smaller)
                 sent = {}
                 for arm in ("ff", "off"):
-                    g = wait_footprint(arms[arm], span=True)
+                    g = wait_footprint(arms[arm], span=True, conditionals=True)
                     sent[arm] = dict(max=g["max"], total=g["total"], carriers=[w["carriers"] for w in g["waits"]])
                 fp = dict(sent=sent, written=fp, max=sent["ff"]["max"], total=sent["ff"]["total"])
         prepared.append((tag, a, succ, spec, pl, arms, chk, written if strict_cz else None, fp))

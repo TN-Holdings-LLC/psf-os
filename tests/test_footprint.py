@@ -98,6 +98,17 @@ def test_fence_keeps_the_target_out_of_the_wait(tmp_path):
     assert r0["items"]["ipe"]["footprint_max"] >= 1 and r1["items"]["ipe"]["footprint_max"] == 0
     assert r0["items"]["ipe"]["cz"] == r1["items"]["ipe"]["cz"]
     assert FF.exact_distribution(fence_waits(qc)) == FF.exact_distribution(qc)
+    # the workplace VS's その6: fenced at the reads only, the target still waits in a superposition at the phase
+    # feedback (counted with conditionals=True); fenced at every wait it does not
+    from psf_os.footprint import wait_footprint
+    ch = FF.place(dev, 2)["chain"]
+    comp = FF.Compiler(dev)
+    reads = wait_footprint(comp.run(FF.on_device(fence_waits(qc), ch, dev.num_qubits)), span=True, conditionals=True)
+    every = wait_footprint(comp.run(FF.on_device(fence_waits(qc, conditionals=True), ch, dev.num_qubits)), span=True,
+                           conditionals=True)
+    assert reads["max"] >= 1 and any(w.get("kind") == "conditional" for w in reads["waits"])
+    assert every["max"] == 0
+    assert FF.exact_distribution(fence_waits(qc, conditionals=True)) == FF.exact_distribution(qc)
     rec = json.load(open(os.path.join(str(tmp_path / "fence"), "runs", "ff_ipe.json")))
     assert '"fence": true' in json.dumps(rec)
     FF.build(dev, item, str(tmp_path / "plain2"), sentinel_spec=dict(kind="echo_clifford", D=24))

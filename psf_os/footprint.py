@@ -50,12 +50,16 @@ def _reduced(sv, k, n):
     return psi @ psi.conj().T
 
 
-def fence_waits(qc):
+def fence_waits(qc, conditionals=False):
     """A copy of qc with a barrier on every qubit before each mid-circuit measurement group and after each run of
     conditionals (after-2026-11-20, the workplace VS's finding of 2026-11-20): the compiler then cannot merge a gate
     before a wait with one after it (on the compiled IPE it merged the target's return to |1> with the next round's
     preparation, so the target waited in a superposition), and nothing on a waiting qubit is moved into the wait.
-    The circuit's action is unchanged (barriers only)."""
+    The circuit's action is unchanged (barriers only).
+    conditionals (after-2026-11-20, the workplace VS's その6: default False, as checked): also a barrier on every
+    qubit before each run of conditionals that does not follow a read directly (IPE's phase feedback, decided on
+    bits read rounds before). Without it the compiler moves the next round's gates into such a run and the target
+    waits there in a superposition."""
     out = qc.copy_empty_like()
     data = list(qc.data)
     allq = list(qc.qubits)
@@ -70,19 +74,24 @@ def fence_waits(qc):
             out.barrier(allq)
         if prev == "if_else" and name != "if_else":
             out.barrier(allq)
+        if conditionals and name == "if_else" and prev not in ("if_else", "measure", "barrier"):
+            out.barrier(allq)
         out.append(ins.operation, ins.qubits, ins.clbits)
         prev = name
     return out
 
 
-def wait_footprint(qc, span=False):
+def wait_footprint(qc, span=False, conditionals=False):
     """The footprint at each mid-circuit measurement group of qc (top level; conditional blocks are applied per
     branch). Returns dict(waits, max, total, carrier_waits, qubits) with qubits the active qubits (compacted).
     span (after-2026-11-20; default False: as before): a waiting qubit counts when it is not in a basis state at the
     measurement OR after any instruction up to the end of the conditionals that follow (in program order): the whole
     wait, not only its start (the workplace VS counted at every measurement and conditional test). For a circuit as
     sent (compiled), span=True is the honest count; without fence_waits, gates after the conditionals on other qubits
-    may still be scheduled into the wait (not counted)."""
+    may still be scheduled into the wait (not counted).
+    conditionals (after-2026-11-20, as the workplace VS counts; default False): a run of conditionals that does not
+    follow a read directly (e.g. IPE's phase feedback on bits read rounds before) is a wait too: the qubits outside
+    its blocks wait while it is decided; recorded with measured=[] and kind "conditional"."""
     from qiskit.quantum_info import Statevector
     act = _active(qc)
     if len(act) > MAX_QUBITS:
@@ -175,6 +184,26 @@ def wait_footprint(qc, span=False):
             if span:
                 recheck()
             continue
+        if name == "if_else" and conditionals and i > 0 and data[i - 1].operation.name not in ("if_else", "measure") \
+                and not (data[i - 1].operation.name == "barrier" and i > 1 and
+                         data[i - 2].operation.name in ("measure", "if_else")):
+            inside = set()
+            j2 = i
+            while j2 < len(data) and data[j2].operation.name == "if_else":
+                inside |= {pos[qc.find_bit(q).index] for q in data[j2].qubits}
+                j2 += 1
+            carriers = set()
+            excited = 0.0
+            for p_, sv, _ in branches:
+                for k in range(n):
+                    if k in inside:
+                        continue
+                    rho = _reduced(sv.data, k, n)
+                    excited += p_ * float(rho[1, 1].real)
+                    if not _is_basis(rho):
+                        carriers.add(k)
+            waits.append(dict(at=i, measured=[], kind="conditional", carriers=sorted(act[k] for k in carriers),
+                              idle_basis=n - len(inside) - len(carriers), excited=excited))
         if name == "if_else":
             seen_cond[0] = True
             tgt, val = op.condition
@@ -208,12 +237,12 @@ def wait_footprint(qc, span=False):
                 excited_waits=sum(w["excited"] for w in waits), qubits=act)
 
 
-def footprint_or_none(qc, span=True):
+def footprint_or_none(qc, span=True, conditionals=True):
     """wait_footprint(qc, span) summarised for a record: dict(counted=True, max, total, carriers per wait), or
     dict(counted=False, why) when the circuit is above the bounds (MAX_QUBITS active qubits, MAX_WORK). Never raises
     for size: a build that records the footprint goes on without it."""
     try:
-        f = wait_footprint(qc, span=span)
+        f = wait_footprint(qc, span=span, conditionals=conditionals)
     except ValueError as e:
         return dict(counted=False, why=str(e))
     return dict(counted=True, max=f["max"], total=f["total"], excited=round(f["excited_waits"], 6),

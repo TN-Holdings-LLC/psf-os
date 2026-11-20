@@ -10,15 +10,19 @@ seeds, below), so every recorded build reproduces as before. Nothing reads a cal
   every build also writes `OUT/checks.json`, beside the job and outside it. Per item and arm it holds the CZ count as
   written and as compiled; a difference is noted on stderr and never refused (`strict_cz=True` refuses). It also holds
   the wait footprint as sent and as written, or `counted: false` with the reason when a circuit is above the
-  footprint's bounds (14 active qubits; 2^20 branch amplitudes). The build never waits on it.
+  footprint's bounds (14 active qubits; 2^20 branch amplitudes). The build never waits on it. A tool that builds
+  in a temporary folder and assembles the job itself (the notebook's decoy and interfere tools) does not keep it; the
+  job is the same either way.
 - **The wait footprint** (`psf_os.footprint`): at each mid-circuit read, the waiting qubits not in a computational
   basis state (carriers) and the expected number in |1> (excited). It is computed exactly over every branch of the
-  circuit, as written or as sent, at the read or over the whole wait (`span=True`). `build(footprint=True)` writes it
+  circuit, as written or as sent, at the read or over the whole wait (`span=True`), and at runs of conditionals
+  decided on bits read earlier (`conditionals=True`: IPE's phase feedback; the checks count these too). `build(footprint=True)` writes it
   into the records (this changes the records; off by default).
 - **Around a wait** (off by default):
   - `build(fence=True)` puts a barrier on every qubit before each mid-circuit read and after each run of
-    conditionals. The compiler then cannot merge gates across the wait: compiled IPE otherwise held its target in a
-    superposition while it waited.
+    conditionals; `fence_waits(qc, conditionals=True)` also before each run of conditionals that does not follow a
+    read. The compiler then cannot merge gates across the wait: compiled IPE otherwise held its target in a
+    superposition while it waited (with the reads fenced only, still at its phase-feedback conditionals).
   - `build(strict_cz=True)` refuses a compiled CZ count other than the written one (the level-1 compiler cancels a CX
     pair with nothing between them; a barrier keeps it).
 - **The ring sentinel over the test** (off by default): `build(..., sentinel_over_test=True)` prefers, at the same ring
