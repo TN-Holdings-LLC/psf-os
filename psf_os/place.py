@@ -174,11 +174,21 @@ def _all_pairs(dev):
     return lattice(dev.all_couplers(), dev.num_qubits)
 
 
-def fold_place(dev, n):
+def _prefer_order(cands, prefer, sites=lambda c: c[2]):
+    """The candidates with those whose sites hold every qubit of `prefer` first (each group in the fixed order);
+    unchanged when prefer is None (after-2026-11-20: a sentinel ring over the test's qubits)."""
+    if not prefer:
+        return cands
+    want = set(int(q) for q in prefer)
+    return [c for c in cands if want <= set(sites(c))] + [c for c in cands if not want <= set(sites(c))]
+
+
+def fold_place(dev, n, prefer=None):
     """(m, shape name, cycle qubits) for a ring of n, or None: the shortest outline of m >= n qubits, the first in
-    the fixed order whose qubits and couplers all work."""
+    the fixed order whose qubits and couplers all work. prefer (after-2026-11-20; default None: as before): within
+    the shortest m, an outline holding every qubit of prefer comes first (the length rule is not changed)."""
     edges = dev.working_couplers()
-    cands = shapes_for(lattice(edges, dev.num_qubits), n, _all_pairs(dev))
+    cands = _prefer_order(shapes_for(lattice(edges, dev.num_qubits), n, _all_pairs(dev)), prefer)
     for m in sorted({c[0] for c in cands}):
         if m < n:
             continue
@@ -192,11 +202,23 @@ def fold_place(dev, n):
     return None
 
 
-def pend_place(dev, n, packed=False):
+def pend_place(dev, n, packed=False, prefer=None):
     """(m, shape name, cycle qubits, {cycle position: pendant qubit}) for a ring of n, or None: the longest cycle of
     m <= n qubits whose qubits and couplers all work and which has n - m cycle nodes with a working outside
     neighbour; pendants spread evenly over those nodes in cycle order, each node's smallest working outside neighbour
-    not used before (packed=True: the first n - m such nodes)."""
+    not used before (packed=True: the first n - m such nodes). prefer (after-2026-11-20; default None: as before):
+    within the longest m, a placement whose cycle and pendants hold every qubit of prefer comes first."""
+    if prefer:
+        want = set(int(q) for q in prefer)
+        first = _pend_place(dev, n, packed, accept=lambda cyc, pend: want <= set(cyc) | set(pend.values()))
+        plain = _pend_place(dev, n, packed)
+        if first is not None and (plain is None or first[0] == plain[0]):
+            return first
+        return plain
+    return _pend_place(dev, n, packed)
+
+
+def _pend_place(dev, n, packed=False, accept=None):
     edges = dev.working_couplers()
     nb = defaultdict(set)
     for a, b in edges:
@@ -228,16 +250,17 @@ def pend_place(dev, n, packed=False):
                     break
                 pend[p] = free[0]
                 used.add(free[0])
-            if len(pend) == k:
+            if len(pend) == k and (accept is None or accept(cyc, pend)):
                 return m, name, cyc, pend
     return None
 
 
-def rule_choice(dev, n):
+def rule_choice(dev, n, prefer=None):
     """The `fold:rule` choice: of the extra two-qubit gates per layer (pendants n - m_below, holes 2 (m_above - n),
     the zipper (5n - 8)/2 - n or (5n - 7)/2 - n) the fewest decides (ties: pendants, then holes); the zipper is not
-    built (FoldRefused). Returns dict(kind, m, shape, cycle, pend)."""
-    below, above = pend_place(dev, n), fold_place(dev, n)
+    built (FoldRefused). Returns dict(kind, m, shape, cycle, pend). prefer (after-2026-11-20; default None: as
+    before): passed to pend_place and fold_place (a placement over those qubits first, at the same m)."""
+    below, above = pend_place(dev, n, prefer=prefer), fold_place(dev, n, prefer=prefer)
     ep = (n - below[0]) if below else None
     eh = 2 * (above[0] - n) if above else None
     ez = (5 * n - 8) // 2 - n if n % 2 == 0 else (5 * n - 7) // 2 - n

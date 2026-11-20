@@ -646,3 +646,84 @@ def test_strict_cz_refuses_a_cancelled_pair_and_a_barrier_keeps_it(tmp_path):
     assert r2["items"]["p"]["cz"] == 2
     rec = json.load(open(str(tmp_path / "kept" / "runs" / "ff_p.json")))
     assert '"cz_written": 2' in json.dumps(rec)
+
+
+def test_bundle_behind_fixed_first_receiver(tmp_path):
+    """after-2026-11-20 (receiver for the decoy test's row 1; off by default): two conditional sub-items are allowed
+    behind a fixed sub-item whose bits come first, and refused as before without the option, with the fixed item's
+    bits not first, or with a conditional item first."""
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(2, 1.1, m=2)
+    z = FF.strip_conditionals(qc)
+    three = [("a", qc, sp), ("b", qc, sp), ("z", z, sp)]
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24))
+    with pytest.raises(FF.Refused, match="conditional operations"):
+        FF.build_bundle(dev, three, str(tmp_path / "n"), **kw)                    # the default: refused as before
+    with pytest.raises(FF.Refused, match="behind_fixed_first"):
+        FF.build_bundle(dev, three, str(tmp_path / "l"), behind_fixed_first=True, **kw)    # z's bits last
+    with pytest.raises(FF.Refused, match="behind_fixed_first"):
+        FF.build_bundle(dev, three, str(tmp_path / "c"), behind_fixed_first=True, bit_order=["b", "z", "a"], **kw)
+    rep = FF.build_bundle(dev, three, str(tmp_path / "f"), behind_fixed_first=True, bit_order=["z", "a", "b"], **kw)
+    assert rep["items"]["z"]["bit_offset"] == 0
+    m = json.load(open(str(tmp_path / "f" / "job" / "manifest.json")))
+    cn = m["conditional_neighbours"]
+    assert cn["allowed_by"] == "behind_fixed_first" and cn["shield"] == "z" and cn["used"] and not cn["allowed"]
+    # with allow_conditional_neighbours the option changes nothing in the circuits or the manifest
+    r1 = FF.build_bundle(dev, three, str(tmp_path / "p"), allow_conditional_neighbours=True, bit_order=["z", "a", "b"],
+                         **kw)
+    r2 = FF.build_bundle(dev, three, str(tmp_path / "q"), allow_conditional_neighbours=True, bit_order=["z", "a", "b"],
+                         behind_fixed_first=True, **kw)
+    for f in ("ff_pack.qpy", "ff_pack_off.qpy", "ff_pack_floor.qpy"):
+        assert open(str(tmp_path / "p" / "runs" / f), "rb").read() == open(str(tmp_path / "q" / "runs" / f), "rb").read()
+    assert "allowed_by" not in json.load(open(str(tmp_path / "q" / "job" / "manifest.json")))["conditional_neighbours"]
+    assert r1["items"] == r2["items"]
+
+
+def test_run_local_seed_slots(tmp_path):
+    """after-2026-11-20: run_local's default seeds keep every circuit's and every part's shot seeds apart (Aer seeds
+    shot i with seed + i: seeds 1 apart give the same shots shifted by one on one circuit); stride=1 is v0.2.0's
+    formula, kept so that recorded dry runs reproduce; each formula reproduces itself."""
+    sd = FF.local_seeds(100, 4000, 3)
+    seeds = sorted([sd(k) for k in range(3)] + [sd(k, j) for k in range(3) for j in range(1, 5)])
+    assert len(set(seeds)) == len(seeds) and min(b - a for a, b in zip(seeds, seeds[1:])) > 4000
+    old = FF.local_seeds(100, 4000, 3, stride=1)
+    assert [old(k) for k in range(3)] == [100, 101, 102] and old(2, 3) == 2103
+    with pytest.raises(FF.Refused, match="stride"):
+        FF.local_seeds(100, 4000, 3, stride=4000)
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(1, 1.1, m=3)
+    two = [("a", qc, sp), ("b", qc, sp)]
+    kw = dict(shots=4000, sentinel_spec=dict(kind="echo_clifford", D=24), allow_conditional_neighbours=True)
+    rows = {}
+    for name, st in (("old", 1), ("new", None), ("old2", 1), ("new2", None)):
+        out = str(tmp_path / name)
+        FF.build_bundle(dev, two, out, **kw)
+        FF.run_local(out, stride=st)
+        sub = json.load(open(os.path.join(out, "job", "submission.json")))
+        assert ("seed_stride" in sub) is (st is None)
+        rows[name] = json.load(open(os.path.join(out, "job", "raw_counts.json")))["rows"]
+    assert rows["old"] == rows["old2"] and rows["new"] == rows["new2"]   # each formula reproduces itself
+    assert rows["old"][0] == rows["new"][0] and rows["old"][1:] != rows["new"][1:]   # circuit 0 keeps its seed
+
+
+def test_sentinel_over_the_test_qubits(tmp_path):
+    """after-2026-11-20 (home's candidate 4): sentinel_over_test records which of the test's qubits the ring holds and
+    prefers a ring over them at the same length; off, the job is byte for byte as before. ring_chains puts the test on
+    the ring instead (rule C's chains start at a corner no ring passes)."""
+    dev = Dv.fetch_fake("FakeFez")
+    item = [("tp2", FF.teleport_test(2), dict(success={2: 0}))]
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24))
+    FF.build(dev, item, str(tmp_path / "a"), **kw)
+    FF.build(dev, item, str(tmp_path / "a2"), sentinel_over_test=False, **kw)
+    assert open(str(tmp_path / "a" / "job" / "circuits.qpy"), "rb").read() == \
+        open(str(tmp_path / "a2" / "job" / "circuits.qpy"), "rb").read()
+    assert "sentinel_cover" not in json.load(open(str(tmp_path / "a" / "job" / "manifest.json")))
+    r = FF.build(dev, item, str(tmp_path / "b"), sentinel_over_test=True, **kw)
+    cov = r["sentinel_cover"]
+    assert cov["asked"] == sorted(r["items"]["tp2"]["chain"]) and set(cov["covered"]) <= set(cov["asked"])
+    assert json.load(open(str(tmp_path / "b" / "job" / "manifest.json")))["sentinel_cover"] == cov
+    ring = FF.sentinel_ring(dev)
+    chs = FF.ring_chains(dev, 3)
+    assert chs and all(set(c) <= set(ring) for c in chs)
+    r = FF.build(dev, item, str(tmp_path / "c"), chains={"tp2": chs[0]}, sentinel_over_test=True, **kw)
+    assert r["items"]["tp2"]["chain"] == chs[0] and r["sentinel_cover"]["all"]

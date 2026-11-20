@@ -67,6 +67,27 @@ def test_rule_stop_loss_and_stops():
     assert R["stop"] and R["stop_reason"].startswith("budget")
 
 
+def test_rule_between_job_term_receiver():
+    """after-2026-11-20 (receiver for the loopvar test's DRIFTS; off by default): the between-job sigma widens the SE
+    of g; a HELPS within the wider SE becomes NOT SHOWN and the rule follows; sigma None or 0 is the rule as declared,
+    byte for byte; OVERSHOOT and rows without g are kept."""
+    r = rnd(2, {"1": row(["P1"], "PRESCRIPTION HELPS", g=0.0182, g_se=0.0080, output_qubit=5),
+                "2": row(["P1"], "PRESCRIPTION HELPS", g=0.0500, g_se=0.0080, output_qubit=5),
+                "3": row(["P1"], "OVERSHOOT", g=0.0, g_se=0.01, output_qubit=5),
+                "4": row(["P0"], "NO PRESCRIPTION")})
+    base = LP.next_stacks([r])
+    assert LP.next_stacks([r], between_job_sigma=None) == base == LP.next_stacks([r], between_job_sigma=0.0)
+    assert "between_job_sigma" not in base and base["stacks"]["1"] == ["P1", "M"]
+    R = LP.next_stacks([r], between_job_sigma=0.01)
+    assert R["stacks"]["1"] == ["P1"] and R["why"]["1"] == "R4 keep"          # 0.0182 < 2 sqrt(0.008^2 + 0.01^2)
+    assert R["stacks"]["2"] == ["P1", "M"] and R["stacks"]["3"] == ["P2", "B"] and R["stacks"]["4"] == ["P0"]
+    assert R["between_job_sigma"] == 0.01
+    j = LP.rejudge(r, {"1": 0.01})
+    assert j["rows"]["1"]["verdict"] == "NOT SHOWN" and j["rows"]["1"]["verdict_shot"] == "PRESCRIPTION HELPS"
+    assert j["rows"]["2"]["verdict"] == "PRESCRIPTION HELPS" and j["rows"]["2"]["between_job_sigma"] == 0.0
+    assert r["rows"]["1"]["verdict"] == "PRESCRIPTION HELPS"                  # the round given is not changed
+
+
 # ------------------------------------------------------------------------------------------------ the ledger
 
 def test_ledger_start():

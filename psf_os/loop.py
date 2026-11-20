@@ -104,13 +104,38 @@ def _significant(x, two_se):
     return x is not None and two_se is not None and x > 0 and x >= two_se
 
 
-def next_stacks(rounds, rungs=RUNGS, q_choice=None, k_max=4, budget=240.0, next_cost=None):
+def rejudge(rnd, between_job_sigma):
+    """Receiver prototype (after-2026-11-20; for the loopvar test's DRIFTS only): a copy of one round's scores with the
+    verdict of every row that holds g and g_se judged again with a between-job term, SE = sqrt(g_se^2 + sigma^2)
+    (sigma: the excess between-job standard deviation of g, e.g. loopvar's s_b, the same for every key unless a dict
+    {key: sigma} is given). PRESCRIPTION HELPS when g > 0 and g >= 2 SE, else NOT SHOWN; OVERSHOOT is kept as scored
+    (its threshold is on P, which loopvar does not measure between jobs). Each changed row keeps the shot-only values
+    as g_se_shot and verdict_shot and records between_job_sigma. sigma None or 0 returns the round unchanged."""
+    if not between_job_sigma:
+        return rnd
+    out = json.loads(json.dumps(rnd))
+    for key, row in out["rows"].items():
+        sig = between_job_sigma.get(key, 0.0) if isinstance(between_job_sigma, dict) else float(between_job_sigma)
+        if "g" not in row or "g_se" not in row or row.get("verdict") not in VERDICTS:
+            continue
+        se = (row["g_se"] ** 2 + sig ** 2) ** 0.5
+        v = "OVERSHOOT" if row.get("overshoot") else (
+            "PRESCRIPTION HELPS" if (row["g"] > 0 and row["g"] >= 2 * se) else "NOT SHOWN")
+        row.update(g_se_shot=row["g_se"], verdict_shot=row["verdict"], between_job_sigma=sig, g_se=se, verdict=v)
+    return out
+
+
+def next_stacks(rounds, rungs=RUNGS, q_choice=None, k_max=4, budget=240.0, next_cost=None, between_job_sigma=None):
     """The next round's rule from the rounds scored so far (each a round_scores dict: round, device, rows {key: row},
     dr {qubit: {gap, two_se, sig}}, model_seconds_so_far). A row holds: stack, verdict, overshoot; with B also
-    share_gap, share_gap_two_se, output_qubit_nf; without B output_qubit. q_choice(key, row, dr) -> offset | None."""
+    share_gap, share_gap_two_se, output_qubit_nf; without B output_qubit. q_choice(key, row, dr) -> offset | None.
+    between_job_sigma (receiver prototype, after-2026-11-20; default None = the rule as declared): every round's
+    verdicts judged again by rejudge() before the rule reads them; the result then records between_job_sigma."""
     for r in rungs:
         if r not in RUNGS:
             raise ValueError(f"rung {r!r} is not one of {RUNGS}")
+    if between_job_sigma:
+        rounds = [rejudge(r, between_job_sigma) for r in rounds]
     cur = rounds[-1]
     prev = rounds[-2] if len(rounds) > 1 else None
     dr = cur.get("dr") or {}
@@ -165,8 +190,11 @@ def next_stacks(rounds, rungs=RUNGS, q_choice=None, k_max=4, budget=240.0, next_
         stop, sreason = True, f"round limit K = {k_max}"
     elif next_cost is not None and spent + next_cost > budget:
         stop, sreason = True, f"budget: {spent:.1f} + {next_cost:.1f} > {budget:.0f} s"
-    return dict(round=k + 1, device=cur["device"], rungs=list(rungs), stacks=stacks, why=why, stop=stop,
-                stop_reason=sreason, model_seconds_so_far=spent)
+    res = dict(round=k + 1, device=cur["device"], rungs=list(rungs), stacks=stacks, why=why, stop=stop,
+               stop_reason=sreason, model_seconds_so_far=spent)
+    if between_job_sigma:
+        res["between_job_sigma"] = between_job_sigma
+    return res
 
 
 # ------------------------------------------------------------------------------------------------ the ledger
@@ -444,7 +472,7 @@ class Night:
         rounds = [json.load(open(os.path.join(self.out, f"r{j}", "round_scores.json"))) for j in range(1, k + 1)]
         rf = os.path.join(self.out, f"r{k}")
         return next_stacks(rounds, c["rungs"], q_choice=lambda key, row, dr: self.exp.q_choice(rf, key, row, dr),
-                           k_max=c["k_max"], budget=c["budget"])
+                           k_max=c["k_max"], budget=c["budget"], between_job_sigma=c.get("between_job_sigma"))
 
     def rounds(self):
         c = self.cfg()
@@ -739,7 +767,8 @@ def verify(out, exp, resim=False):
                 if os.path.exists(nxt):
                     rounds = [json.load(open(os.path.join(out, f"r{i}", "round_scores.json"))) for i in range(1, k + 1)]
                     Rn = next_stacks(rounds, cfg["rungs"], q_choice=lambda key, row, dr, rf=rec: exp.q_choice(
-                        rf, key, row, dr), k_max=cfg["k_max"], budget=cfg["budget"])
+                        rf, key, row, dr), k_max=cfg["k_max"], budget=cfg["budget"],
+                        between_job_sigma=cfg.get("between_job_sigma"))
                     note(f"RULE{k + 1}.json re-ruled", first_difference(json.load(open(nxt)), Rn))
             k += 1
         if resim and cfg["dry"]:

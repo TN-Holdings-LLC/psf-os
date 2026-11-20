@@ -590,14 +590,48 @@ def checks(dev, compiled, chain):
 
 # ------------------------------------------------------------------------------------------------ build
 
-def _sentinel(dev, runs, shots, spec, ring=40):
+def _sentinel(dev, runs, shots, spec, ring=40, cover=None):
+    """The job's ring sentinel. cover (after-2026-11-20; default None: the ring as before): the test's physical
+    qubits; the ring rule then prefers, at the same length, an outline holding all of them (place.rule_choice prefer).
+    Returns dict(asked, covered, ring) when cover is given (the qubits of cover on the sentinel's ring), else None."""
     import numpy as np
     from psf_os import circuits as C
     from psf_os import sentinel
     from psf_os.compile import RuleCompiler, measured_qubits
-    rc = RuleCompiler(dev)
+    rc = RuleCompiler(dev, prefer=cover)
     mq = measured_qubits(rc.compile(C.model_circuit(list(np.zeros(C.n_model_angles(ring, 1))), ring, 1)))
-    sentinel.build(dev, runs, [int(mq[j]) for j in range(ring)], shots, rc, spec=spec)
+    user_ring = [int(mq[j]) for j in range(ring)]
+    sentinel.build(dev, runs, user_ring, shots, rc, spec=spec)
+    if not cover:
+        return None
+    asked = sorted({int(q) for q in cover})
+    return dict(asked=asked, covered=sorted(set(asked) & set(user_ring)), all=set(asked) <= set(user_ring))
+
+
+def sentinel_ring(dev, ring=40, cover=None):
+    """The physical qubits of the job's ring sentinel in ring order (as _sentinel places it; cover as there)."""
+    import numpy as np
+    from psf_os import circuits as C
+    from psf_os.compile import RuleCompiler, measured_qubits
+    rc = RuleCompiler(dev, prefer=cover)
+    mq = measured_qubits(rc.compile(C.model_circuit(list(np.zeros(C.n_model_angles(ring, 1))), ring, 1)))
+    return [int(mq[j]) for j in range(ring)]
+
+
+def ring_chains(dev, n, ring=40):
+    """after-2026-11-20 (home's candidate 4, the other way round): every chain of n consecutive sites of the default
+    sentinel ring whose neighbours are joined by working couplers and whose qubits are usable, in ring order of the
+    first site. A test placed on one (build's chains={tag: chain}) is watched by the sentinel on its own qubits.
+    Rule C's chains on a Heron start at a corner (qubit 0 has one coupler, qubit 1 two), where no ring can pass."""
+    r = sentinel_ring(dev, ring)
+    work = {tuple(sorted(e)) for e in dev.working_couplers()}
+    out = []
+    for s in range(len(r)):
+        ch = [r[(s + k) % len(r)] for k in range(n)]
+        if len(set(ch)) == n and all(dev.qubit_ok(q) for q in ch) and all(
+                tuple(sorted((ch[k], ch[k + 1]))) in work for k in range(n - 1)):
+            out.append(ch)
+    return out
 
 
 def given_chain(dev, chain, n):
@@ -668,7 +702,7 @@ def _item_extra(tag, a, succ, spec):
 
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
-          strict_cz=False, footprint=False):
+          strict_cz=False, footprint=False, sentinel_over_test=False):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -686,7 +720,11 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     cz_written.
     footprint (2026-11-20; default False: as before): every record also carries wait_footprint, the waiting qubits not
     in a computational basis state at each mid-circuit measurement of the item as written (psf_os.footprint; logical
-    qubits, noiseless, every branch), and the build report its max and total per item."""
+    qubits, noiseless, every branch), and the build report its max and total per item.
+    sentinel_over_test (after-2026-11-20, home's candidate 4; default False: the ring as before, byte for byte): the
+    ring sentinel's placement prefers, at the same ring length, an outline holding every item's chain (on 2026-11-19 the
+    ring did not hold the qubits that carried IPE); the manifest and the build report record sentinel_cover (asked,
+    covered, all). Nothing is refused when the cover is partial: it is recorded."""
     from psf_os import job as J
     from psf_os import user2d as U
     if pack_fixed:
@@ -765,12 +803,16 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                                  if "rus" in extra else {}),
                               **({"footprint_max": fp["max"], "footprint_total": fp["total"]} if fp is not None
                                  else {}))
-    _sentinel(dev, runs, shots, sentinel_spec)
-    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
+    cover = _sentinel(dev, runs, shots, sentinel_spec,
+                      cover=sorted({q for p in prepared for q in p[4]["chain"]}) if sentinel_over_test else None)
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
+                     **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}))
     rep = dict(device=dev.name, kind=KIND, items=rep_items, circuits=len(man["pubs"]),
                qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
                note="the time model does not include mid-circuit measurement and feed-forward latency (microseconds "
                     "per shot), small against its per-shot term")
+    if cover is not None:
+        rep["sentinel_cover"] = cover
     json.dump(rep, open(os.path.join(out, "build.json"), "w"), indent=1, default=str)
     return rep
 
@@ -958,7 +1000,8 @@ CONDITIONAL_NEIGHBOURS_WHY = (
 
 
 def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None,
-                 allow_conditional_neighbours=False, gap=BUNDLE_GAP, bit_order=None):
+                 allow_conditional_neighbours=False, gap=BUNDLE_GAP, bit_order=None, behind_fixed_first=False,
+                 sentinel_over_test=False):
     """items: [(sub_tag, QuantumCircuit, spec)] as for build. One job of one bundle: the sub-items placed by
     bundle_place, every sub-item on its segment and its bits at an offset of one classical register; ff = the
     sub-items' circuits, off = their off arms (explicit or the conditionals removed), floor = floor_of(ff), one ring
@@ -973,7 +1016,14 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     Interference tests (2026-11-18 evening): gap = the sites skipped between items (bundle_place; default 1, as
     before); bit_order = the sub-item tags in the order their bits take in the register (default: the items' order, as
     before), so that placement (items' order on the chain) and bit order can be varied apart; both recorded in the
-    manifest when not at their defaults."""
+    manifest when not at their defaults.
+    Receiver prototype (after-2026-11-20; off by default, for the decoy test's row 1 only: "the loss sits on the
+    register's first bits; a fixed first item shields"): behind_fixed_first=True allows two or more conditional
+    sub-items when the sub-item whose bits come FIRST in the register (bit_order[0], or the first item) holds no
+    conditional operation and at least one bit (a fixed item, e.g. an item's off arm); refused otherwise, as before.
+    The manifest records conditional_neighbours.allowed_by = "behind_fixed_first" and the shield's tag. Not to be used
+    before a declared night has read row 1.
+    sentinel_over_test (after-2026-11-20; default False): as build's, over the bundle's sub-items' qubits."""
     from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
     from psf_os import job as J
     from psf_os import user2d as U
@@ -990,12 +1040,23 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
         raise Refused(f"{tag}: {e}") from None
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
     with_cond = [t for t, p in zip(tags, prep) if p[0]["conditionals"]]
-    if len(with_cond) >= 2 and not allow_conditional_neighbours:
+    shield = None
+    if len(with_cond) >= 2 and not allow_conditional_neighbours and behind_fixed_first:
+        first = (list(bit_order) if bit_order is not None else tags)[0]
+        fp = prep[tags.index(first)][0]
+        if first in with_cond or fp["clbits"] < 1:
+            raise Refused(f"{tag}: behind_fixed_first needs the sub-item whose bits come first ({first}) to hold no "
+                          f"conditional operation and at least one bit (conditionals {fp['conditionals']}, bits "
+                          f"{fp['clbits']})")
+        shield = first
+    if len(with_cond) >= 2 and not allow_conditional_neighbours and shield is None:
         raise Refused(f"{tag}: sub-items {with_cond} hold conditional operations; {CONDITIONAL_NEIGHBOURS_WHY}. Build them "
                       "as single items (build), or pass allow_conditional_neighbours=True for a test of the loss itself")
     man_extra = dict(conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)},
                      conditional_neighbours=dict(items=with_cond, allowed=bool(allow_conditional_neighbours),
                                                  used=len(with_cond) >= 2))
+    if shield is not None:
+        man_extra["conditional_neighbours"].update(allowed_by="behind_fixed_first", shield=shield)
     if gap != BUNDLE_GAP:
         man_extra["bundle_gap"] = gap
     if bit_order is not None and list(bit_order) != tags:
@@ -1064,13 +1125,18 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
         U._record(dev, runs, f"ff_{tag}" + ("" if arm == "ff" else f"_{arm}"), "user" if arm == "ff" else arm,
                   kind, [c], [dict(input="f", setting="z")],
                   extra=dict(extra, ff_arm=arm, cz=cz_count(c), checks=chk[arm]), valid=True, **common)
-    _sentinel(dev, runs, shots, sentinel_spec)
+    cover = _sentinel(dev, runs, shots, sentinel_spec,
+                      cover=sorted(q for t in tags for q in table[t]["qubits"]) if sentinel_over_test else None)
+    if cover is not None:
+        man_extra["sentinel_cover"] = cover
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra)
     rep = dict(device=dev.name, kind=KIND, bundle=tag, chain=chain, segments=segs,
                items={t: dict(n=sizes[i], chain=table[t]["qubits"], bit_offset=lo[i], clbits=prep[i][0]["clbits"],
                               cz=table[t]["cz"]) for i, t in enumerate(tags)},
                circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
                cz=dict(ff=cz_count(arms["ff"]), off=cz_count(arms["off"]), floor=cz_count(arms["floor"])))
+    if cover is not None:
+        rep["sentinel_cover"] = cover
     json.dump(rep, open(os.path.join(out, "build.json"), "w"), indent=1, default=str)
     return rep
 
@@ -1280,11 +1346,31 @@ def marginal_counts(counts, offset, nbits):
 
 # ------------------------------------------------------------------------------------------------ local run, card
 
-def run_local(out, seed=20261116):
+LOCAL_STRIDE_MIN = 10_000     # run_local's seed slots (after-2026-11-20): at least this far apart, and more than the shots
+LOCAL_PARTS_MAX = 64          # slots per circuit for the parts of a bundle
+
+
+def local_seeds(seed, shots, n_circuits, stride=None):
+    """The seed of circuit k (part j) of a local run: slot k * LOCAL_PARTS_MAX + j at seed + w * slot with
+    w = max(LOCAL_STRIDE_MIN, shots + 1), so that no two runs share a per-shot seed (Aer seeds shot i with seed + i:
+    seeds closer than the shots give the same shots shifted, 2026-11-18 / 2026-11-20). stride=1 is the formula before
+    after-2026-11-20 (circuit k at seed + k, part j at seed + 1000 k + j), kept to reproduce old dry runs byte for byte.
+    Returns a function (k, j=None) -> seed."""
+    if stride == 1:
+        return lambda k, j=None: seed + k if j is None else seed + 1000 * k + j
+    w = max(LOCAL_STRIDE_MIN, shots + 1) if stride is None else int(stride)
+    if w <= shots:
+        raise Refused(f"seed stride {w} is not above the shots ({shots})")
+    return lambda k, j=None: seed + w * (k * LOCAL_PARTS_MAX + (j or 0))
+
+
+def run_local(out, seed=20261116, stride=None):
     """Noiseless Aer on the job's circuits (compacted to their touched qubits; Clifford circuits by the stabilizer
     method, others by statevector up to LOCAL_MAX_QUBITS touched qubits, else refused at once; control flow
     supported); raw_counts.json and
-    submission.json as a device run writes them (local=True). For dry runs only: refused if a submission exists."""
+    submission.json as a device run writes them (local=True). For dry runs only: refused if a submission exists.
+    Seeds (after-2026-11-20): local_seeds(seed, shots, circuits, stride); the default keeps every circuit's and every
+    part's shot seeds apart; stride=1 gives the seeds of v0.2.0 (recorded runs reproduce with it)."""
     from qiskit import qpy
     from qiskit_aer import AerSimulator
     from psf_os.sim import to_clifford_gates
@@ -1295,6 +1381,9 @@ def run_local(out, seed=20261116):
     man = json.load(open(os.path.join(job, "manifest.json")))
     circs = qpy.load(open(os.path.join(job, "circuits.qpy"), "rb"))
     rows = []
+    sd = local_seeds(seed, man["shots"], len(circs), stride)
+    if stride != 1 and len(circs) * LOCAL_PARTS_MAX * max(LOCAL_STRIDE_MIN, man["shots"] + 1) + seed >= 2 ** 62:
+        raise Refused("too many circuits for the seed slots")
     for k, c in enumerate(circs):
         cc = compact(c)
         cl = None if cc.has_control_flow_op() else to_clifford_gates(cc)
@@ -1305,19 +1394,25 @@ def run_local(out, seed=20261116):
             if parts and len(parts) > 1 and all(len(q) <= LOCAL_MAX_QUBITS for q, _ in parts):
                 # a bundle (2026-11-17): independent parts, each simulated alone, joined shot by shot (exact: the
                 # parts share no qubit and no bit, so the joint distribution is the product)
-                rows.append(dict(pub=k, counts=_run_parts(c, parts, man["shots"], seed + 1000 * k)))
+                if len(parts) > LOCAL_PARTS_MAX and stride != 1:
+                    raise Refused(f"circuit {k}: {len(parts)} parts, above {LOCAL_PARTS_MAX} seed slots")
+                rows.append(dict(pub=k, counts=_run_parts(c, parts, man["shots"], seed,
+                                                          seed_of=lambda j, k=k: sd(k, j))))
                 continue
             if cc.num_qubits > LOCAL_MAX_QUBITS:
                 raise Refused(f"circuit {k} ({c.name}) is not Clifford and touches {cc.num_qubits} qubits: too slow to "
                               "simulate here (the ring sentinel at h = 0.6 on 40 qubits did not finish in 18 min). "
                               "For a dry run build the job with sentinel_spec=dict(kind='echo_clifford', D=24)")
             meth = "statevector"
-        res = AerSimulator(method=meth).run(cc, shots=man["shots"], seed_simulator=seed + k).result()
+        res = AerSimulator(method=meth).run(cc, shots=man["shots"], seed_simulator=sd(k)).result()
         rows.append(dict(pub=k, counts={key.replace(" ", ""): v for key, v in res.get_counts(0).items()}))
     from psf_os.ibm import _stamp
     t = _stamp()
-    json.dump(dict(job_id=f"local-noiseless-{seed}", submitted=t, local=True, backend=man["fetch"]["backend"],
-                   simulator="aer noiseless (statevector / mps, compacted)"), open(sub, "w"), indent=1)
+    info = dict(job_id=f"local-noiseless-{seed}", submitted=t, local=True, backend=man["fetch"]["backend"],
+                simulator="aer noiseless (statevector / mps, compacted)")
+    if stride != 1:
+        info["seed_stride"] = "default" if stride is None else int(stride)
+    json.dump(info, open(sub, "w"), indent=1)
     json.dump(dict(fetched=t, job_id=f"local-noiseless-{seed}", status="DONE (local noiseless)", rows=rows),
               open(os.path.join(job, "raw_counts.json"), "w"))
     return f"local-noiseless-{seed}"
@@ -1351,8 +1446,9 @@ def components(qc):
     return sorted(out)
 
 
-def _run_parts(qc, parts, shots, seed):
-    """Noiseless shots of qc as the product of its independent parts (each by statevector, memory per shot)."""
+def _run_parts(qc, parts, shots, seed, seed_of=None):
+    """Noiseless shots of qc as the product of its independent parts (each by statevector, memory per shot); part j
+    with seed_of(j), or seed + j (v0.2.0) when seed_of is None."""
     from qiskit_aer import AerSimulator
     nb = qc.num_clbits
     shots_bits = [["0"] * nb for _ in range(shots)]
@@ -1360,7 +1456,8 @@ def _run_parts(qc, parts, shots, seed):
         sub = restrict(qc, qs, cs)
         if not cs:
             continue
-        res = AerSimulator(method="statevector").run(sub, shots=shots, memory=True, seed_simulator=seed + j).result()
+        res = AerSimulator(method="statevector").run(sub, shots=shots, memory=True,
+                                                     seed_simulator=seed + j if seed_of is None else seed_of(j)).result()
         mem = res.get_memory(0)
         for s, key in enumerate(mem):
             key = key.replace(" ", "")

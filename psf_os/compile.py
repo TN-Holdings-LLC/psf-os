@@ -17,7 +17,7 @@ VERSION = "psf-os rule compiler (TOQB fold:rule at 8d44f05, map-free Target)"
 
 
 class RuleCompiler:
-    def __init__(self, dev):
+    def __init__(self, dev, prefer=None):
         from qiskit.transpiler import generate_preset_pass_manager
         self.dev = dev
         self.target = map_free_target(dev)
@@ -25,6 +25,7 @@ class RuleCompiler:
                                                routing_method="none", seed_transpiler=0)
         self._cache = {}
         self.last = {}
+        self.prefer = sorted(int(q) for q in prefer) if prefer else None   # after-2026-11-20: rule_choice(prefer)
 
     @staticmethod
     def _sig(qc):
@@ -44,7 +45,7 @@ class RuleCompiler:
                 op.params = [pv[k + j] for j in range(len(op.params))]
                 k += len(op.params)
             par.append(op, ins.qubits, ins.clbits)
-        choice = P.rule_choice(self.dev, qc.num_qubits)
+        choice = P.rule_choice(self.dev, qc.num_qubits, prefer=self.prefer)
         if choice["kind"] == "pend":
             hc, init, fin = P.pend_circuit(par, choice["cycle"], choice["pend"], self.dev.num_qubits)
         else:
