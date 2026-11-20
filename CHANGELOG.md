@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased (branch after-2026-11-20; not released, not used by the declared tests of 2026-11-20)
+
+What the circuits look like as they are sent, recorded by default; what the compiler may do around a wait, chosen by
+argument. No default changes a job: `job/`, `runs/` and `build.json` are byte for byte as in 0.2.0 (but run_local's
+seeds, below), so every recorded build reproduces as before. Nothing reads a calibration quality number.
+
+- **Record-only checks, on by default** (`build` / `build_bundle`, `record_checks="record"`; `"off"` writes nothing):
+  every build also writes `OUT/checks.json`, beside the job and outside it. Per item and arm it holds the CZ count as
+  written and as compiled; a difference is noted on stderr and never refused (`strict_cz=True` refuses). It also holds
+  the wait footprint as sent and as written, or `counted: false` with the reason when a circuit is above the
+  footprint's bounds (14 active qubits; 2^20 branch amplitudes). The build never waits on it.
+- **The wait footprint** (`psf_os.footprint`): at each mid-circuit read, the waiting qubits not in a computational
+  basis state (carriers) and the expected number in |1> (excited). It is computed exactly over every branch of the
+  circuit, as written or as sent, at the read or over the whole wait (`span=True`). `build(footprint=True)` writes it
+  into the records (this changes the records; off by default).
+- **Around a wait** (off by default):
+  - `build(fence=True)` puts a barrier on every qubit before each mid-circuit read and after each run of
+    conditionals. The compiler then cannot merge gates across the wait: compiled IPE otherwise held its target in a
+    superposition while it waited.
+  - `build(strict_cz=True)` refuses a compiled CZ count other than the written one (the level-1 compiler cancels a CX
+    pair with nothing between them; a barrier keeps it).
+- **The ring sentinel over the test** (off by default): `build(..., sentinel_over_test=True)` prefers, at the same ring
+  length, a ring that holds the test's qubits, and records the cover. `place.rule_choice(prefer=...)` and
+  `RuleCompiler(dev, prefer=...)` support it. `ring_chains(dev, n)` lists chains on the sentinel's own ring.
+- **Receivers for the decoy and loopvar tests** (off by default):
+  - `build_bundle(behind_fixed_first=True)` allows conditional neighbours behind a fixed first item.
+  - `loop.rejudge` and `next_stacks(between_job_sigma=...)` add a between-job term to the loop's threshold.
+- **run_local's seeds** (the one changed default): circuit k, part j at seed + w (64 k + j), w = max(10,000, shots + 1),
+  so no two runs share a per-shot seed. Aer seeds shot i with seed + i, so the 0.2.0 seeds gave neighbouring circuits
+  the same shots shifted by one. `stride=1` keeps the 0.2.0 seeds and reproduces recorded dry runs. Of the notebook's
+  tools that build on this version, 13 of 14 noiseless dry runs read the same words. balanced_night now reads its true
+  shot spread: the 0.2.0 seeds had hidden it.
+
 ## 0.2.0 (2026-11-19)
 
 Real-time control on IBM Heron: circuits that measure in the middle and act on the result while they run, the build

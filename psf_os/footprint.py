@@ -27,6 +27,8 @@ from __future__ import annotations
 import numpy as np
 
 MAX_QUBITS = 14
+MAX_WORK = 2 ** 20      # branches x 2^qubits held at once (after-2026-11-20: a bound, so a build never stalls on it;
+                        # about 0.5 s per circuit at worst on the workplace container)
 EPS = 1e-9
 
 
@@ -166,6 +168,9 @@ def wait_footprint(qc, span=False):
                         b2[cb] = v
                         new.append((p * probs[v], s2, b2))
                 branches = new
+                if len(branches) * 2 ** n > MAX_WORK:
+                    raise ValueError(f"{len(branches)} branches on {n} qubits: above the bound {MAX_WORK} for the "
+                                     "exact footprint")
             i = j
             if span:
                 recheck()
@@ -201,6 +206,17 @@ def wait_footprint(qc, span=False):
     counts = [len(w["carriers"]) for w in waits]
     return dict(waits=waits, max=max(counts, default=0), total=sum(counts), carrier_waits=sum(counts),
                 excited_waits=sum(w["excited"] for w in waits), qubits=act)
+
+
+def footprint_or_none(qc, span=True):
+    """wait_footprint(qc, span) summarised for a record: dict(counted=True, max, total, carriers per wait), or
+    dict(counted=False, why) when the circuit is above the bounds (MAX_QUBITS active qubits, MAX_WORK). Never raises
+    for size: a build that records the footprint goes on without it."""
+    try:
+        f = wait_footprint(qc, span=span)
+    except ValueError as e:
+        return dict(counted=False, why=str(e))
+    return dict(counted=True, max=f["max"], total=f["total"], carriers=[w["carriers"] for w in f["waits"]])
 
 
 def main(argv=None):

@@ -701,8 +701,33 @@ def _item_extra(tag, a, succ, spec):
     return extra
 
 
+CHECKS_FILE = "checks.json"
+
+
+def _check_row(tag, qc, off, arms):
+    """One item's record-only checks (after-2026-11-20): CZ written / compiled per arm, the footprint as sent and as
+    written (psf_os.footprint.footprint_or_none: counted=False above its bounds)."""
+    import sys
+    from psf_os.footprint import footprint_or_none
+    written = {"ff": cz_count(qc), "off": cz_count(off), "floor": cz_count(qc)}
+    got = {arm: cz_count(c) for arm, c in arms.items()}
+    row = dict(cz_written=written, cz_compiled=got, cz_same=got == written,
+               footprint_sent={arm: footprint_or_none(arms[arm]) for arm in ("ff", "off")},
+               footprint_written=footprint_or_none(qc))
+    if got != written:
+        print(f"note: {tag}: compiled CZ {got} differ from the circuit as written {written} (recorded in "
+              f"{CHECKS_FILE}; strict_cz=True refuses)", file=sys.stderr)
+    return row
+
+
+def _write_checks(out, rows):
+    json.dump(dict(note="record-only checks (psf-os after-2026-11-20): never part of the job; the job and its "
+                        "records are as without them", items=rows),
+              open(os.path.join(out, CHECKS_FILE), "w"), indent=1)
+
+
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
-          strict_cz=False, footprint=False, sentinel_over_test=False, fence=False):
+          strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record"):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -729,6 +754,12 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     off arms get a barrier on every qubit before each mid-circuit measurement group and after each run of
     conditionals (psf_os.footprint.fence_waits) before compiling, so that the compiler cannot merge gates across a
     wait (on the compiled IPE the target otherwise waited in a superposition). The records carry fence=True.
+    record_checks (after-2026-11-20, home's three conditions; default "record"): every build also writes OUT/checks.json,
+    beside the job and outside it (job/, runs/ and build.json are byte for byte as without it, so every recorded
+    build reproduces as before): per item and arm the CZ as written and as compiled (a difference is noted on stderr,
+    never refused: strict_cz=True refuses), and the wait footprint as sent (each arm compiled, span) and as written,
+    or counted=False with the reason when the circuit is above the footprint's bounds (the build never waits on it).
+    record_checks="off" writes nothing.
     footprint (changed the same day, after the workplace VS's finding): the records carry the footprint of each arm
     as sent (compiled, span=True: the whole wait) as `sent` and its max / total first, and the item as written beside
     (`written`)."""
@@ -746,8 +777,11 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     chains = dict(chains or {})
     if set(chains) - set(tags):
         raise Refused(f"chains given for unknown items {sorted(set(chains) - set(tags))}")
+    if record_checks not in ("record", "off"):
+        raise Refused(f"record_checks must be 'record' or 'off' (got {record_checks!r})")
     comp = Compiler(dev)
     prepared = []
+    check_rows = {}
     for tag, qc, spec in items:
         a, qc, off, succ, spec = _prepare(tag, qc, spec)
         if fence:
@@ -767,6 +801,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             raise Refused(f"{tag}: acceptance failed: {chk}")
         if not any(n == "if_else" for n, _ in walk(arms["ff"])) and a["conditionals"]:
             raise Refused(f"{tag}: the compiler removed the conditionals")
+        if record_checks == "record":
+            check_rows[tag] = _check_row(tag, qc, off, arms)
         if strict_cz:
             written = {"ff": cz_count(qc), "off": cz_count(off), "floor": cz_count(qc)}
             got = {arm: cz_count(c) for arm, c in arms.items()}
@@ -826,6 +862,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                       cover=sorted({q for p in prepared for q in p[4]["chain"]}) if sentinel_over_test else None)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
                      **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}))
+    if record_checks == "record":
+        _write_checks(out, check_rows)
     rep = dict(device=dev.name, kind=KIND, items=rep_items, circuits=len(man["pubs"]),
                qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
                note="the time model does not include mid-circuit measurement and feed-forward latency (microseconds "
@@ -1020,7 +1058,7 @@ CONDITIONAL_NEIGHBOURS_WHY = (
 
 def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None,
                  allow_conditional_neighbours=False, gap=BUNDLE_GAP, bit_order=None, behind_fixed_first=False,
-                 sentinel_over_test=False):
+                 sentinel_over_test=False, record_checks="record"):
     """items: [(sub_tag, QuantumCircuit, spec)] as for build. One job of one bundle: the sub-items placed by
     bundle_place, every sub-item on its segment and its bits at an offset of one classical register; ff = the
     sub-items' circuits, off = their off arms (explicit or the conditionals removed), floor = floor_of(ff), one ring
@@ -1042,7 +1080,10 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     conditional operation and at least one bit (a fixed item, e.g. an item's off arm); refused otherwise, as before.
     The manifest records conditional_neighbours.allowed_by = "behind_fixed_first" and the shield's tag. Not to be used
     before a declared night has read row 1.
-    sentinel_over_test (after-2026-11-20; default False): as build's, over the bundle's sub-items' qubits."""
+    sentinel_over_test (after-2026-11-20; default False): as build's, over the bundle's sub-items' qubits.
+    record_checks (after-2026-11-20; default "record"): as build's, OUT/checks.json for the bundle's three arms."""
+    if record_checks not in ("record", "off"):
+        raise Refused(f"record_checks must be 'record' or 'off' (got {record_checks!r})")
     from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
     from psf_os import job as J
     from psf_os import user2d as U
@@ -1149,6 +1190,8 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     if cover is not None:
         man_extra["sentinel_cover"] = cover
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra)
+    if record_checks == "record":
+        _write_checks(out, {tag: _check_row(tag, logical["ff"], logical["off"], arms)})
     rep = dict(device=dev.name, kind=KIND, bundle=tag, chain=chain, segments=segs,
                items={t: dict(n=sizes[i], chain=table[t]["qubits"], bit_offset=lo[i], clbits=prep[i][0]["clbits"],
                               cz=table[t]["cz"]) for i, t in enumerate(tags)},

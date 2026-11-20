@@ -104,3 +104,52 @@ def test_fence_keeps_the_target_out_of_the_wait(tmp_path):
     FF.build(dev, item, str(tmp_path / "plain3"), sentinel_spec=dict(kind="echo_clifford", D=24), fence=False)
     assert open(str(tmp_path / "plain2" / "job" / "circuits.qpy"), "rb").read() == \
         open(str(tmp_path / "plain3" / "job" / "circuits.qpy"), "rb").read()
+
+
+def test_record_only_checks_change_nothing_of_the_job(tmp_path):
+    """after-2026-11-20 (home's three conditions): record_checks="record" (the default) writes OUT/checks.json only: job/,
+    runs/ and build.json are byte for byte those of record_checks="off" (the manifest but its time stamp); a CZ difference
+    is noted, never refused; a circuit above the footprint's bounds is recorded as not counted, and the build does not
+    wait on it."""
+    import json
+    import os
+    import time
+    from psf_os import device as Dv
+    from psf_os import feedforward as FF
+    dev = Dv.fetch_fake("FakeFez")
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24))
+    qc = _qc(3, 3)                                     # a CX pair the compiler cancels: written 2 CZ more than compiled
+    qc.h(0)
+    qc.cz(0, 1)
+    qc.cz(0, 1)
+    qc.measure(0, 0)
+    with qc.if_test((qc.clbits[0], 1)):
+        qc.x(1)
+    qc.measure(1, 1)
+    qc.measure(2, 2)
+    item = [("c", qc, dict(success={2: 0}))]
+    FF.build(dev, item, str(tmp_path / "rec"), **kw)
+    FF.build(dev, item, str(tmp_path / "off"), record_checks="off", **kw)
+    a, b = tmp_path / "rec", tmp_path / "off"
+    assert not (b / "checks.json").exists()
+    for rel in ("job/circuits.qpy", "build.json") + tuple("runs/" + f for f in sorted(os.listdir(b / "runs"))):
+        assert (a / rel).read_bytes() == (b / rel).read_bytes(), rel
+    ma, mb = (json.load(open(x / "job" / "manifest.json")) for x in (a, b))
+    for m in (ma, mb):
+        m.pop("written")
+    assert ma == mb
+    row = json.load(open(a / "checks.json"))["items"]["c"]
+    assert row["cz_written"]["ff"] == 2 and row["cz_compiled"]["ff"] == 0 and not row["cz_same"]
+    assert row["footprint_sent"]["ff"]["counted"] and row["footprint_written"]["counted"]
+    big = FF.teleport_test(14)                         # 15 qubits: above MAX_QUBITS
+    t = time.time()
+    FF.build(dev, [("big", big if hasattr(big, "data") else big[0], dict(success={14: 0}))], str(tmp_path / "big"),
+             **kw)
+    assert time.time() - t < 120
+    r = json.load(open(tmp_path / "big" / "checks.json"))["items"]["big"]
+    assert r["footprint_sent"]["ff"]["counted"] is False and "above" in r["footprint_sent"]["ff"]["why"]
+    deep = FF.teleport_test(12)                        # 13 qubits, 12 reads: above MAX_WORK
+    from psf_os.footprint import footprint_or_none
+    t = time.time()
+    f = footprint_or_none(deep if hasattr(deep, "data") else deep[0])
+    assert f["counted"] is False and time.time() - t < 60
