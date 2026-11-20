@@ -17,6 +17,10 @@ device's loss follows the footprint or the CZ count is a question for a declared
 Exact: branching over every mid-circuit measurement (statevector per branch), so up to MAX_QUBITS active qubits.
 A carrier in ANY branch counts (the footprint of the worst branch, per wait). Measurements at the end (nothing but
 measurements and barriers after them on any qubit) are not waits.
+
+Beside the carriers, each wait also gives `excited`: the expected number of waiting qubits in |1> (the population of
+|1> summed over the waiting qubits, averaged over the branches with their probabilities), the part that decays
+(2026-11-16: holding the likely value as |0> recovered 0.11-0.22); `excited_waits` sums it over the waits.
 """
 from __future__ import annotations
 
@@ -53,6 +57,8 @@ def wait_footprint(qc):
         raise ValueError(f"{len(act)} active qubits: above {MAX_QUBITS} for the exact footprint")
     pos = {q: i for i, q in enumerate(act)}
     n = len(act)
+    if n == 0:
+        return dict(waits=[], max=0, total=0, carrier_waits=0, qubits=[])
     ncl = qc.num_clbits
     data = list(qc.data)
 
@@ -80,14 +86,17 @@ def wait_footprint(qc):
             measured = [pos[qc.find_bit(g.qubits[0]).index] for g in group]
             if mid:
                 carriers = set()
+                excited = 0.0
                 for p, sv, _ in branches:
                     for k in range(n):
                         if k in measured:
                             continue
-                        if not _is_basis(_reduced(sv.data, k, n)):
+                        rho = _reduced(sv.data, k, n)
+                        excited += p * float(rho[1, 1].real)
+                        if not _is_basis(rho):
                             carriers.add(k)
                 waits.append(dict(at=i, measured=[act[k] for k in measured], carriers=sorted(act[k] for k in carriers),
-                                  idle_basis=n - len(measured) - len(carriers)))
+                                  idle_basis=n - len(measured) - len(carriers), excited=excited))
             for g in group:
                 k = pos[qc.find_bit(g.qubits[0]).index]
                 cb = qc.find_bit(g.clbits[0]).index
@@ -132,7 +141,7 @@ def wait_footprint(qc):
         i += 1
     counts = [len(w["carriers"]) for w in waits]
     return dict(waits=waits, max=max(counts, default=0), total=sum(counts), carrier_waits=sum(counts),
-                qubits=act)
+                excited_waits=sum(w["excited"] for w in waits), qubits=act)
 
 
 def main(argv=None):
