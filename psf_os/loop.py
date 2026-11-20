@@ -17,6 +17,11 @@ What psf-os holds (no circuit of any one test):
       R4 keep
     Stops: a fixed point (no key changes, none overshoots, none NOT SHOWN for the first time), the round limit, the
     budget (model seconds), and in the runner a check FAIL, a refused build, a job that ends in error.
+  * the paired rule (`next_stacks_paired`, loop-paired-2026-11-21; off by default): per key an incumbent and a
+    candidate in one job, decided by their difference inside that job (adopted at d >= 2 SE, not adopted at
+    d <= -2 SE or when the candidate overshoots, the incumbent kept between); the next candidate is the next untried
+    step (B after an overshoot, the diagnostics' base on P0, R2's Q on B, then the rungs); a step not adopted is not
+    tried again that night; a key with no step left stops; the night stops when every key has stopped.
   * the ledger (`ledger_start`): the last night's final stacks are used for round 1 only on the same device with the
     same calibration time (the device record's time stamp, never an error number), and per key only where tonight's
     diagnostics agree with the ledger's family of base; where they disagree the diagnostics win. Every decision (used /
@@ -194,6 +199,168 @@ def next_stacks(rounds, rungs=RUNGS, q_choice=None, k_max=4, budget=240.0, next_
                stop_reason=sreason, model_seconds_so_far=spent)
     if between_job_sigma:
         res["between_job_sigma"] = between_job_sigma
+    return res
+
+
+# ------------------------------------------------------------------------------------------------ the paired rule
+# loop-paired-2026-11-21 (home instruction "輪の改造: 比べる 2 つの積み方を同じジョブに入れる"; the owner's decision of
+# 2026-11-20 20:05 JST). The 2026-11-20 loopvar test: copies in one job agree (pooled p 0.625), jobs minutes apart moved
+# beyond shot noise at L 2 (p 0.006). The rule above compares round k's g with round k-1's across jobs; the paired rule
+# puts the incumbent and the next candidate in one job and decides by their difference inside it. Off by default
+# (Night's cfg "paired"); every night recorded before is ruled and verified as before.
+
+PAIRED_WORDS = ("CANDIDATE ADOPTED", "CANDIDATE NOT ADOPTED", "INCUMBENT KEPT", "CANDIDATE OVERSHOOTS")
+
+
+def paired_decision(row):
+    """One key's decision inside one job. row: exact, inc_p, inc_se, cand_p, cand_se, cand_overshoot.
+    d = |P_incumbent - exact| - |P_candidate - exact| (positive: the candidate is nearer), SE from both ff arms' shots.
+    OVERSHOOT of the candidate (R1's test, P > noiseless + 2 SE): not adopted whatever d. d >= 2 SE: adopted;
+    d <= -2 SE: not adopted; between: the incumbent is kept (the stack with fewer layers)."""
+    ex = row["exact"]
+    d = abs(row["inc_p"] - ex) - abs(row["cand_p"] - ex)
+    se = (row["inc_se"] ** 2 + row["cand_se"] ** 2) ** 0.5
+    if row.get("cand_overshoot"):
+        word, adopted = "CANDIDATE OVERSHOOTS", False
+    elif d > 0 and d >= 2 * se:
+        word, adopted = "CANDIDATE ADOPTED", True
+    elif d < 0 and -d >= 2 * se:
+        word, adopted = "CANDIDATE NOT ADOPTED", False
+    else:
+        word, adopted = "INCUMBENT KEPT", False
+    return dict(d=d, se=se, two_se=2 * se, word=word, adopted=adopted)
+
+
+def paired_next_candidate(inc, tried, info, dr, rungs=RUNGS, q_choice=None, pick=None, overshoot=False):
+    """(candidate stack, step) or (None, None) when no step is left. inc: the incumbent; tried: the steps tried this
+    night (adopted or not; a step not adopted is never tried again that night); info: the incumbent's own readings
+    (output_qubit; with B share_gap, share_gap_two_se, output_qubit_nf), from the job that measured it last.
+    Steps, first match wins:
+      B     the last candidate overshot, no B yet, B not tried          -> P2 + B (R1)
+      base  the incumbent is P0, base not tried, the diagnostics' pick   -> [pick]
+      Q     the incumbent has B, no Q, Q not tried, R2's conditions     -> + Q<offset>
+      M, F  in the order of rungs, on an incumbent other than P0 without B: M not in it and not tried -> + M;
+            F not in it and not tried, base P1 or P2, Dr on its output qubit against its read frame -> switch + F
+    A key with no step left stops."""
+    tried = set(tried)
+    inc = list(inc)
+    if overshoot and "B" not in inc and "B" not in tried:
+        return ["P2", "B"], "B"
+    if inc == ["P0"]:
+        if "base" not in tried and pick and pick != "P0":
+            return [pick], "base"
+        return None, None
+    if "B" in inc:
+        if any(x.startswith("Q") for x in inc) or "Q" in tried or q_choice is None:
+            return None, None
+        qn = str(info.get("output_qubit_nf"))
+        if _significant(info.get("share_gap"), info.get("share_gap_two_se")) and qn in dr and dr[qn].get("sig"):
+            o = q_choice(info)
+            if o:
+                return inc + [f"Q{o}"], "Q"
+        return None, None
+    for rung in rungs:
+        if rung == "M" and "M" not in inc and "M" not in tried:
+            return inc + ["M"], "M"
+        if rung == "F" and "F" not in inc and "F" not in tried and base_of(inc) in FRAME_SWITCH:
+            if against_frame(base_of(inc), dr.get(str(info.get("output_qubit")))):
+                return [FRAME_SWITCH[base_of(inc)]] + inc[1:] + ["F"], "F"
+    return None, None
+
+
+def _paired_stop(R, k, k_max, budget, next_cost):
+    if all(c is None for c in R["candidates"].values()):
+        return True, "no step left on any key: every key keeps its incumbent"
+    if k >= k_max:
+        return True, f"round limit K = {k_max}"
+    if next_cost is not None and R["model_seconds_so_far"] + next_cost > budget:
+        return True, f"budget: {R['model_seconds_so_far']:.1f} + {next_cost:.1f} > {budget:.0f} s"
+    return False, None
+
+
+def paired_rule1(R, stacks, decision):
+    """Round 1 of a paired night from the experiment's first rule R (stacks: the diagnostics' pick per key) and the
+    stacks after the ledger: every incumbent P0; the candidate is the ledger's stack where the ledger was used for that
+    key (step "ledger"), otherwise the diagnostics' stack (step "base"); a key whose candidate would be P0 has none."""
+    R = dict(R)
+    diag = {k: list(v) for k, v in R["stacks"].items()}
+    cands, steps, why = {}, {}, dict(R.get("why", {}))
+    for k, st in stacks.items():
+        used = str(decision.get("per_key", {}).get(k, "")).startswith("ledger used")
+        if list(st) == ["P0"]:
+            cands[k], steps[k] = None, None
+            why[k] = "the diagnostics pick P0: no candidate"
+        else:
+            cands[k], steps[k] = list(st), ("ledger" if used else "base")
+            why[k] = (decision["per_key"][k] if used else f"candidate {'+'.join(st)} from the diagnostics") + \
+                " against the incumbent P0 in one job"
+    R.update(paired=True, diagnostics_stacks=diag, ledger_stacks={k: list(v) for k, v in stacks.items()},
+             stacks={k: ["P0"] for k in stacks}, candidates=cands, steps=steps, tried={k: [] for k in stacks},
+             pick={k: diag[k][0] for k in diag}, why=why)
+    R.setdefault("model_seconds_so_far", 0.0)
+    if all(c is None for c in cands.values()):
+        R.update(stop=True, stop_reason="no step left on any key: every key keeps its incumbent")
+    return R
+
+
+def next_stacks_paired(rounds, rungs=RUNGS, q_choice=None, k_max=4, budget=240.0, next_cost=None,
+                       climb_on_kept=False):
+    """The next paired rule from the rounds scored so far. Each row of the last round holds: stack (the incumbent),
+    candidate, step, tried, pick, exact, inc_p, inc_se, cand_p, cand_se, cand_overshoot, and the readings of both for
+    the next step (inc_info, cand_info: output_qubit; with B share_gap, share_gap_two_se, output_qubit_nf).
+    q_choice(key, info, dr) -> offset | None (R2's choice). Returns the rule with stacks (incumbents), candidates,
+    steps, tried, the decisions of this round and the stop.
+    climb_on_kept (option, default False: the rule as the home instruction wrote it): when the decision is
+    INCUMBENT KEPT (the candidate within error of the incumbent), the next candidate is built on the kept candidate
+    instead of the incumbent (e.g. P0 kept against P1: the next candidate is P1 + M, against P0). A step not adopted
+    (d <= -2 SE) or an overshoot ends that path as before. Simulated nights (notes/loop_paired_2026-11-21): with weak
+    illustrative noise the base alone may do nothing while base + M does; without the option such a key stops at P0."""
+    for r in rungs:
+        if r not in RUNGS:
+            raise ValueError(f"rung {r!r} is not one of {RUNGS}")
+    cur = rounds[-1]
+    dr = cur.get("dr") or {}
+    stacks, cands, steps, tried, why, decisions, pick = {}, {}, {}, {}, {}, {}, {}
+    for key, row in cur["rows"].items():
+        inc = list(row["stack"])
+        tr = list(row.get("tried", []))
+        pick[key] = row.get("pick")
+        over = False
+        info = row.get("inc_info") or {}
+        if row.get("candidate"):
+            dec = paired_decision(row)
+            decisions[key] = dec
+            if row.get("step") and row["step"] not in tr:
+                tr.append(row["step"])
+            over = bool(row.get("cand_overshoot"))
+            if dec["adopted"]:
+                inc, info = list(row["candidate"]), row.get("cand_info") or {}
+            head = (f"{'+'.join(row['candidate'])} against {'+'.join(row['stack'])}: d {dec['d']:+.4f} (2 SE "
+                    f"{dec['two_se']:.4f}) {dec['word']}")
+        else:
+            decisions[key] = None
+            head = f"{'+'.join(inc)} kept (no candidate)"
+        qc = (lambda inf, key=key: q_choice(key, inf, dr)) if q_choice is not None else None
+        if row.get("candidate"):
+            nc, step = paired_next_candidate(inc, tr, info, dr, rungs, qc, pick[key], over)
+            if (climb_on_kept and decisions[key]["word"] == "INCUMBENT KEPT"
+                    and list(row["candidate"]) != ["P0"]):
+                nc, step = paired_next_candidate(list(row["candidate"]), tr, row.get("cand_info") or {}, dr,
+                                                 rungs, qc, pick[key], False)
+                if nc is not None:
+                    why_climb = f"; climbing on the kept {'+'.join(row['candidate'])}"
+                    head += why_climb
+        else:
+            nc, step = None, None                        # a key that has stopped stays stopped
+        stacks[key], cands[key], steps[key], tried[key] = inc, nc, step, tr
+        why[key] = head + (f"; next candidate {'+'.join(nc)} (step {step})" if nc else "; no step left")
+    res = dict(round=cur["round"] + 1, device=cur["device"], rungs=list(rungs), paired=True, stacks=stacks,
+               candidates=cands, steps=steps, tried=tried, pick=pick, decisions=decisions, why=why,
+               model_seconds_so_far=cur.get("model_seconds_so_far", 0.0))
+    if climb_on_kept:
+        res["climb_on_kept"] = True
+    stop, sreason = _paired_stop(res, cur["round"], k_max, budget, next_cost)
+    res.update(stop=stop, stop_reason=sreason)
     return res
 
 
@@ -447,6 +614,13 @@ class Night:
         cal = self.exp.calibration_time(self.device_dir())
         led = ledger_load(c.get("ledger"))
         stacks, dec = ledger_start(led, c["device"], cal, R["stacks"], self.exp.family)
+        if c.get("paired"):
+            R = paired_rule1(R, stacks, dec)
+            R.update(ledger=dec, ledger_last=led[-1] if led else None, calibration_time=cal, rungs=c["rungs"])
+            json.dump(R, open(p, "w"), indent=1)
+            self.log("RULE1.json (paired): incumbents " + json.dumps(R["stacks"]) + ", candidates " +
+                     json.dumps(R["candidates"]) + f"; ledger: {dec['why']}")
+            return
         for k in stacks:
             if stacks[k] != R["stacks"][k]:
                 R["why"][k] = dec["per_key"][k]
@@ -471,6 +645,9 @@ class Night:
         c = self.cfg()
         rounds = [json.load(open(os.path.join(self.out, f"r{j}", "round_scores.json"))) for j in range(1, k + 1)]
         rf = os.path.join(self.out, f"r{k}")
+        if c.get("paired"):
+            return next_stacks_paired(rounds, c["rungs"], q_choice=lambda key, info, dr: self.exp.q_choice(
+                rf, key, info, dr), k_max=c["k_max"], budget=c["budget"], climb_on_kept=c.get("climb_on_kept", False))
         return next_stacks(rounds, c["rungs"], q_choice=lambda key, row, dr: self.exp.q_choice(rf, key, row, dr),
                            k_max=c["k_max"], budget=c["budget"], between_job_sigma=c.get("between_job_sigma"))
 
@@ -515,6 +692,8 @@ class Night:
                 Rn = self.next_rule(k)
                 json.dump(Rn, open(nxt, "w"), indent=1)
                 self.log(f"RULE{k + 1}.json: {json.dumps(Rn['stacks'])} " + json.dumps(Rn["why"]))
+                if Rn.get("paired"):
+                    self.log(f"RULE{k + 1}.json candidates: {json.dumps(Rn['candidates'])}")
             k += 1
 
     def scored_rounds(self):
@@ -552,6 +731,12 @@ class Night:
             # ".../loop" every night, gave lines no one could tell apart)
             e = ledger_entry(f"{os.path.basename(self.out)}@{now()[:10]}", c["device"], R1.get("calibration_time"), c["rungs"], rounds,
                              R1.get("ledger", {}))
+            if c.get("paired") and rounds:
+                # the paired night's final stacks: the incumbents after the last round's decisions (the next rule)
+                last_rule = os.path.join(self.out, f"RULE{rounds[-1]['round'] + 1}.json")
+                if os.path.exists(last_rule):
+                    e["last_stacks"] = json.load(open(last_rule))["stacks"]
+                e["paired"] = True
             json.dump(ledger_load(led) + [e], open(led, "w"), indent=1, default=str)
             open(os.path.join(self.out, "ledger_written"), "w").write(now() + "\n")
             self.log(f"ledger: night appended to {led}")
@@ -593,8 +778,10 @@ def _read(p):
 
 
 def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=RUNGS, ledger=None, zip_path=None,
-          extra=None):
-    """A new night in OUT (refused if OUT exists). Device runs need zip_path; noise / k_max / budget are for dry runs."""
+          extra=None, paired=False):
+    """A new night in OUT (refused if OUT exists). Device runs need zip_path; noise / k_max / budget are for dry runs.
+    paired (loop-paired-2026-11-21; default False: the cfg and the night as before): the paired rule; the experiment's
+    build reads the rule's candidates."""
     if os.path.exists(out):
         raise SystemExit(f"{out} exists: use resume")
     if not dry_devdir and (noise or k_max or budget):
@@ -606,7 +793,8 @@ def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=
     cfg = dict(build_env=J.build_env(), dry=bool(dry_devdir), dry_devdir=os.path.abspath(dry_devdir) if dry_devdir else None, noise=noise,
                k_max=k_max or exp.k_max, budget=budget or exp.budget_s, rungs=list(rungs),
                ledger=os.path.abspath(ledger) if ledger else None, zip=os.path.abspath(zip_path) if zip_path else None,
-               started=now(), device=None, experiment=exp.name, **(extra or {}))
+               started=now(), device=None, experiment=exp.name, **(extra or {}),
+               **({"paired": True} if paired else {}))
     json.dump(cfg, open(os.path.join(out, "run.json"), "w"), indent=1)
     return Night(out, exp)
 
@@ -749,8 +937,16 @@ def verify(out, exp, resim=False):
                                                                                R["stacks"]))
             led = [rec1["ledger_last"]] if rec1.get("ledger_last") else []
             stacks, dec = ledger_start(led, cfg["device"], rec1.get("calibration_time"), R["stacks"], exp.family)
-            note("round 1: the ledger re-applied", first_difference(dict(stacks=rec1["stacks"], ledger=rec1["ledger"]),
-                                                                    dict(stacks=stacks, ledger=dec)))
+            if cfg.get("paired"):
+                P = paired_rule1(R, stacks, dec)
+                keys = ("stacks", "candidates", "steps", "tried", "pick")
+                note("round 1 (paired): the ledger and the candidates re-applied", first_difference(
+                    dict({k: rec1.get(k) for k in keys}, ledger=rec1["ledger"]),
+                    dict({k: P.get(k) for k in keys}, ledger=dec)))
+            else:
+                note("round 1: the ledger re-applied", first_difference(dict(stacks=rec1["stacks"],
+                                                                             ledger=rec1["ledger"]),
+                                                                        dict(stacks=stacks, ledger=dec)))
         k = 1
         while os.path.exists(os.path.join(out, f"RULE{k}.json")):
             rec = os.path.join(out, f"r{k}")
@@ -766,9 +962,14 @@ def verify(out, exp, resim=False):
                 nxt = os.path.join(out, f"RULE{k + 1}.json")
                 if os.path.exists(nxt):
                     rounds = [json.load(open(os.path.join(out, f"r{i}", "round_scores.json"))) for i in range(1, k + 1)]
-                    Rn = next_stacks(rounds, cfg["rungs"], q_choice=lambda key, row, dr, rf=rec: exp.q_choice(
-                        rf, key, row, dr), k_max=cfg["k_max"], budget=cfg["budget"],
-                        between_job_sigma=cfg.get("between_job_sigma"))
+                    if cfg.get("paired"):
+                        Rn = next_stacks_paired(rounds, cfg["rungs"], q_choice=lambda key, info, dr, rf=rec:
+                                                exp.q_choice(rf, key, info, dr), k_max=cfg["k_max"],
+                                                budget=cfg["budget"], climb_on_kept=cfg.get("climb_on_kept", False))
+                    else:
+                        Rn = next_stacks(rounds, cfg["rungs"], q_choice=lambda key, row, dr, rf=rec: exp.q_choice(
+                            rf, key, row, dr), k_max=cfg["k_max"], budget=cfg["budget"],
+                            between_job_sigma=cfg.get("between_job_sigma"))
                     note(f"RULE{k + 1}.json re-ruled", first_difference(json.load(open(nxt)), Rn))
             k += 1
         if resim and cfg["dry"]:

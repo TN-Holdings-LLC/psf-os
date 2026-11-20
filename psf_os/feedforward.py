@@ -727,7 +727,8 @@ def _write_checks(out, rows):
 
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
-          strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record"):
+          strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record",
+          ff_only=()):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -761,6 +762,10 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     never refused: strict_cz=True refuses), and the wait footprint as sent (each arm compiled, span) and as written,
     or counted=False with the reason when the circuit is above the footprint's bounds (the build never waits on it).
     record_checks="off" writes nothing.
+    ff_only (loop-paired-2026-11-21; default (): every item has its three arms, byte for byte as before): the tags
+    named here get their ff arm only (no off, no floor circuit in the job). For the paired loop: the incumbent's ff
+    beside the candidate's three arms in one job; the incumbent's off and floor were measured when it was adopted.
+    The records of such an item carry ff_only=True.
     footprint (changed the same day, after the workplace VS's finding): the records carry the footprint of each arm
     as sent (compiled, span=True: the whole wait) as `sent` and its max / total first, and the item as written beside
     (`written`)."""
@@ -776,6 +781,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     if not items or len(set(tags)) != len(tags) or not all(U._tag_ok(t) for t in tags):
         raise Refused(f"tags must be distinct and use letters, digits, '_', '.', '-' only: {tags}")
     chains = dict(chains or {})
+    ff_only = set(ff_only or ())
+    if ff_only - set(tags):
+        raise Refused(f"ff_only names unknown items {sorted(ff_only - set(tags))}")
     if set(chains) - set(tags):
         raise Refused(f"chains given for unknown items {sorted(set(chains) - set(tags))}")
     if record_checks not in ("record", "off"):
@@ -844,12 +852,15 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         if a.get("register_conditionals"):
             extra.update(register_conditionals=a["register_conditionals"], condition_bits=a["condition_bits"])
         for arm, kind in (("ff", KIND), ("off", KIND + "_off"), ("floor", KIND + "_floor")):
+            if tag in ff_only and arm != "ff":
+                continue
             c = arms[arm]
             U._record(dev, runs, f"ff_{tag}" + ("" if arm == "ff" else f"_{arm}"), "user" if arm == "ff" else arm,
                       kind, [c], [dict(input="f", setting="z")],
                       extra=dict(extra, ff_arm=arm, cz=cz_count(c), checks=chk[arm],
                                  **({"cz_written": written[arm]} if written else {}),
                                  **({"fence": True} if fence else {}),
+                                 **({"ff_only": True} if tag in ff_only else {}),
                                  **({"wait_footprint": fp} if fp is not None else {})), valid=True, **common)
         c = arms["ff"]
         rep_items[tag] = dict(n=a["n"], chain=chain, cz=cz_count(c), off_cz=cz_count(arms["off"]),

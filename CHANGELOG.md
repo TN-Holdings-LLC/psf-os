@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased (branch loop-paired-2026-11-21, from after-2026-11-20; a prototype, not declared)
+
+The loop compares inside one job (the home instruction of 2026-11-21, the owner's decision of 2026-11-20). Everything
+is off by default: a night without `paired` rules, runs and verifies as before, and `build` without `ff_only` is byte
+for byte as before.
+
+- **The paired rule** (`psf_os.loop.next_stacks_paired`; `Night` with the cfg `paired`, `start(..., paired=True)`):
+  per key an incumbent and a candidate in the same job.
+  - The decision (`paired_decision`) is d = |P_inc - exact| - |P_cand - exact|, with SE from both ff arms. The
+    candidate is adopted at d >= 2 SE; it is not adopted at d <= -2 SE or when it overshoots; between, the incumbent
+    is kept.
+  - The next candidate (`paired_next_candidate`) is the next untried step: B after an overshoot, the diagnostics' base
+    on P0, R2's Q on B, then the rungs M and F. A step that was not adopted is not tried again that night. A key with
+    no step left stops.
+  - Round 1 (`paired_rule1`): every incumbent is P0, and the candidate is the ledger's stack or the diagnostics' stack.
+  - `verify` re-rules round 1 and every rule of a paired night.
+  - The ledger's line for a paired night holds the incumbents after its last decision.
+  - The option `climb_on_kept` (default off): on INCUMBENT KEPT, the next candidate is built on the kept candidate.
+- **`build(ff_only=[tags])`**: those items get their ff arm only (no off, no floor), and their records carry
+  `ff_only`. In the paired loop this is the incumbent's ff beside the candidate's three arms.
+- Tests: `tests/test_loop_paired.py` (9).
+
 ## Unreleased (branch after-2026-11-20; not released, not used by the declared tests of 2026-11-20)
 
 What the circuits look like as they are sent, recorded by default; what the compiler may do around a wait, chosen by
