@@ -614,3 +614,35 @@ def test_bundle_gap_per_pair(tmp_path):
     for bad in ([1], [1, 0], [1, 2, 3], True):
         with pytest.raises(FF.Refused, match="gap"):
             FF.build_bundle(dev, three, str(tmp_path / f"x{len(str(bad))}{bad is True}"), gap=bad, **kw)
+
+
+def test_strict_cz_refuses_a_cancelled_pair_and_a_barrier_keeps_it(tmp_path):
+    """2026-11-20: strict_cz refuses a build whose compiled CZ differ from the written ones; a barrier between the
+    gates keeps the pair; without strict_cz the build is as before (the records carry no cz_written)."""
+    dev = Dv.fetch_fake("FakeFez")
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24))
+
+    def item(barrier):
+        qc = QuantumCircuit(QuantumRegister(2, "q"), ClassicalRegister(2, "c"))
+        qc.h(0)
+        qc.h(1)
+        qc.cz(0, 1)
+        if barrier:
+            qc.barrier()
+        qc.cz(0, 1)
+        qc.h(0)
+        qc.h(1)
+        qc.measure(0, 0)
+        qc.measure(1, 1)
+        return qc
+    sp = dict(success={0: 0, 1: 0})
+    r0 = FF.build(dev, [("p", item(False), sp)], str(tmp_path / "plain"), **kw)
+    assert r0["items"]["p"]["cz"] == 0
+    rec = json.load(open(str(tmp_path / "plain" / "runs" / "ff_p.json")))
+    assert "cz_written" not in json.dumps(rec)
+    with pytest.raises(FF.Refused, match="strict_cz"):
+        FF.build(dev, [("p", item(False), sp)], str(tmp_path / "strict"), strict_cz=True, **kw)
+    r2 = FF.build(dev, [("p", item(True), sp)], str(tmp_path / "kept"), strict_cz=True, **kw)
+    assert r2["items"]["p"]["cz"] == 2
+    rec = json.load(open(str(tmp_path / "kept" / "runs" / "ff_p.json")))
+    assert '"cz_written": 2' in json.dumps(rec)

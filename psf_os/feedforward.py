@@ -667,7 +667,8 @@ def _item_extra(tag, a, succ, spec):
     return extra
 
 
-def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False):
+def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
+          strict_cz=False, footprint=False):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -677,7 +678,15 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     items not named are placed by rule C as before.
     pack_fixed (v0.2 prototype, 2026-11-18; default False: the build above, unchanged): every item's ff arm stays its
     own circuit, while the fixed arms (off and floor: no conditional) of all items are packed into one off circuit and
-    one floor circuit (build_pack_fixed)."""
+    one floor circuit (build_pack_fixed).
+    strict_cz (2026-11-20, after-2026-11-20; default False: as before, byte for byte): refused when an arm's compiled
+    CZ count differs from the CZ count of the circuit as written for that arm (the compiler cancels a CX pair with
+    nothing between them; on 2026-11-19 three of the repetition code's four items went 16 -> 14 CZ). A barrier keeps
+    a pair (the level-1 pass manager does not cancel across barriers). With strict_cz the records also carry
+    cz_written.
+    footprint (2026-11-20; default False: as before): every record also carries wait_footprint, the waiting qubits not
+    in a computational basis state at each mid-circuit measurement of the item as written (psf_os.footprint; logical
+    qubits, noiseless, every branch), and the build report its max and total per item."""
     from psf_os import job as J
     from psf_os import user2d as U
     if pack_fixed:
@@ -710,11 +719,22 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             raise Refused(f"{tag}: acceptance failed: {chk}")
         if not any(n == "if_else" for n, _ in walk(arms["ff"])) and a["conditionals"]:
             raise Refused(f"{tag}: the compiler removed the conditionals")
-        prepared.append((tag, a, succ, spec, pl, arms, chk))
+        if strict_cz:
+            written = {"ff": cz_count(qc), "off": cz_count(off), "floor": cz_count(qc)}
+            got = {arm: cz_count(c) for arm, c in arms.items()}
+            if got != written:
+                raise Refused(f"{tag}: compiled CZ {got} differ from the circuit as written {written} (strict_cz: a "
+                              "cancelled pair? put a barrier between the gates to keep)")
+        fp = None
+        if footprint:
+            from psf_os.footprint import wait_footprint
+            f = wait_footprint(qc)
+            fp = dict(max=f["max"], total=f["total"], carriers=[w["carriers"] for w in f["waits"]])
+        prepared.append((tag, a, succ, spec, pl, arms, chk, written if strict_cz else None, fp))
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
     rep_items = {}
-    for tag, a, succ, spec, pl, arms, chk in prepared:
+    for tag, a, succ, spec, pl, arms, chk, written, fp in prepared:
         bound = spec.get("bound")
         chain = pl["chain"]
         labels = list(range(a["n"]))
@@ -734,13 +754,17 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             c = arms[arm]
             U._record(dev, runs, f"ff_{tag}" + ("" if arm == "ff" else f"_{arm}"), "user" if arm == "ff" else arm,
                       kind, [c], [dict(input="f", setting="z")],
-                      extra=dict(extra, ff_arm=arm, cz=cz_count(c), checks=chk[arm]), valid=True, **common)
+                      extra=dict(extra, ff_arm=arm, cz=cz_count(c), checks=chk[arm],
+                                 **({"cz_written": written[arm]} if written else {}),
+                                 **({"wait_footprint": fp} if fp is not None else {})), valid=True, **common)
         c = arms["ff"]
         rep_items[tag] = dict(n=a["n"], chain=chain, cz=cz_count(c), off_cz=cz_count(arms["off"]),
                               floor_cz=cz_count(arms["floor"]), depth=c.depth(),
                               mid=a["mid"], conditionals=a["conditionals"], success=succ, bound=bound,
                               **({"rus": extra["rus"], "cz_in_blocks": cz_count(c) - cz_count(arms["off"])}
-                                 if "rus" in extra else {}))
+                                 if "rus" in extra else {}),
+                              **({"footprint_max": fp["max"], "footprint_total": fp["total"]} if fp is not None
+                                 else {}))
     _sentinel(dev, runs, shots, sentinel_spec)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds)
     rep = dict(device=dev.name, kind=KIND, items=rep_items, circuits=len(man["pubs"]),

@@ -52,3 +52,20 @@ def test_measured_qubit_reused_after_its_read():
     qc.measure(1, 1)
     r = wait_footprint(qc)
     assert r["waits"][0]["carriers"] == [1]
+
+
+def test_build_records_the_footprint_only_when_asked(tmp_path):
+    import json
+    from psf_os import device as Dv
+    from psf_os import feedforward as FF
+    dev = Dv.fetch_fake("FakeFez")
+    qc, sp = FF.rus_chain(2, 1.1, m=2)
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24))
+    r0 = FF.build(dev, [("r", qc, sp)], str(tmp_path / "plain"), **kw)
+    r1 = FF.build(dev, [("r", qc, sp)], str(tmp_path / "fp"), footprint=True, **kw)
+    assert "footprint_max" not in r0["items"]["r"] and r1["items"]["r"]["footprint_max"] >= 0
+    for f in ("ff_r.qpy", "ff_r_off.qpy", "ff_r_floor.qpy"):
+        assert open(str(tmp_path / "plain" / "runs" / f), "rb").read() == open(str(tmp_path / "fp" / "runs" / f),
+                                                                                "rb").read()
+    rec = json.load(open(str(tmp_path / "fp" / "runs" / "ff_r.json")))
+    assert "wait_footprint" in json.dumps(rec)
