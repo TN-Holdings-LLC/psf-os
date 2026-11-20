@@ -69,3 +69,38 @@ def test_build_records_the_footprint_only_when_asked(tmp_path):
                                                                                 "rb").read()
     rec = json.load(open(str(tmp_path / "fp" / "runs" / "ff_r.json")))
     assert "wait_footprint" in json.dumps(rec)
+
+
+def test_fence_keeps_the_target_out_of_the_wait(tmp_path):
+    """after-2026-11-20 (the workplace VS's finding): compiled without the fence, IPE's target waits in a
+    superposition (the compiler merges its return to |1> with the next round's preparation across the wait); with
+    fence=True the footprint as sent is 0 at every wait, the CZ count is the same and the noiseless distribution of
+    every arm is unchanged."""
+    import json
+    import os
+    import sys
+    import pytest
+    from psf_os import device as Dv
+    from psf_os import feedforward as FF
+    from psf_os.footprint import fence_waits
+    nb = os.environ.get("TOQB_DIR")
+    if not nb or not os.path.isdir(os.path.join(nb, "notes", "ffapps_2026-11-17")):
+        pytest.skip("needs the lab notebook (TOQB_DIR) for apps.ipe")
+    sys.path.insert(0, os.path.join(nb, "notes", "ffapps_2026-11-17"))
+    import apps as AP
+    dev = Dv.fetch_fake("FakeFez")
+    qc, succ = AP.ipe(3, 5, True)
+    off, _ = AP.ipe(3, 5, False)
+    item = [("ipe", qc, dict(success=succ, off_circuit=off, form="blocks"))]
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24), footprint=True)
+    r0 = FF.build(dev, item, str(tmp_path / "plain"), **kw)
+    r1 = FF.build(dev, item, str(tmp_path / "fence"), fence=True, **kw)
+    assert r0["items"]["ipe"]["footprint_max"] >= 1 and r1["items"]["ipe"]["footprint_max"] == 0
+    assert r0["items"]["ipe"]["cz"] == r1["items"]["ipe"]["cz"]
+    assert FF.exact_distribution(fence_waits(qc)) == FF.exact_distribution(qc)
+    rec = json.load(open(os.path.join(str(tmp_path / "fence"), "runs", "ff_ipe.json")))
+    assert '"fence": true' in json.dumps(rec)
+    FF.build(dev, item, str(tmp_path / "plain2"), sentinel_spec=dict(kind="echo_clifford", D=24))
+    FF.build(dev, item, str(tmp_path / "plain3"), sentinel_spec=dict(kind="echo_clifford", D=24), fence=False)
+    assert open(str(tmp_path / "plain2" / "job" / "circuits.qpy"), "rb").read() == \
+        open(str(tmp_path / "plain3" / "job" / "circuits.qpy"), "rb").read()

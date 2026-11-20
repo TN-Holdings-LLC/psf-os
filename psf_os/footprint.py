@@ -48,9 +48,39 @@ def _reduced(sv, k, n):
     return psi @ psi.conj().T
 
 
-def wait_footprint(qc):
+def fence_waits(qc):
+    """A copy of qc with a barrier on every qubit before each mid-circuit measurement group and after each run of
+    conditionals (after-2026-11-20, the workplace VS's finding of 2026-11-20): the compiler then cannot merge a gate
+    before a wait with one after it (on the compiled IPE it merged the target's return to |1> with the next round's
+    preparation, so the target waited in a superposition), and nothing on a waiting qubit is moved into the wait.
+    The circuit's action is unchanged (barriers only)."""
+    out = qc.copy_empty_like()
+    data = list(qc.data)
+    allq = list(qc.qubits)
+
+    def mid_after(i):
+        return any(ins.operation.name not in ("measure", "barrier") for ins in data[i + 1:])
+
+    prev = None
+    for i, ins in enumerate(data):
+        name = ins.operation.name
+        if name == "measure" and prev not in ("measure", "barrier_fence") and mid_after(i):
+            out.barrier(allq)
+        if prev == "if_else" and name != "if_else":
+            out.barrier(allq)
+        out.append(ins.operation, ins.qubits, ins.clbits)
+        prev = name
+    return out
+
+
+def wait_footprint(qc, span=False):
     """The footprint at each mid-circuit measurement group of qc (top level; conditional blocks are applied per
-    branch). Returns dict(waits, max, total, carrier_waits, qubits) with qubits the active qubits (compacted)."""
+    branch). Returns dict(waits, max, total, carrier_waits, qubits) with qubits the active qubits (compacted).
+    span (after-2026-11-20; default False: as before): a waiting qubit counts when it is not in a basis state at the
+    measurement OR after any instruction up to the end of the conditionals that follow (in program order): the whole
+    wait, not only its start (the workplace VS counted at every measurement and conditional test). For a circuit as
+    sent (compiled), span=True is the honest count; without fence_waits, gates after the conditionals on other qubits
+    may still be scheduled into the wait (not counted)."""
     from qiskit.quantum_info import Statevector
     act = _active(qc)
     if len(act) > MAX_QUBITS:
@@ -67,11 +97,28 @@ def wait_footprint(qc):
 
     branches = [(1.0, Statevector.from_label("0" * n), [0] * ncl)]
     waits = []
+    pending = []          # span: waits still open (until the run of conditionals after them ends)
+    seen_cond = [False]
+
+    def recheck():
+        for wi in pending:
+            w = waits[wi]
+            meas = {pos[q] for q in w["measured"]}
+            for _p, sv, _b in branches:
+                for k in range(n):
+                    if k in meas or act[k] in w["carriers"]:
+                        continue
+                    if not _is_basis(_reduced(sv.data, k, n)):
+                        w["carriers"] = sorted(w["carriers"] + [act[k]])
+                        w["idle_basis"] -= 1
     i = 0
     while i < len(data):
         ins = data[i]
         op = ins.operation
         name = op.name
+        if span and pending and name not in ("if_else", "barrier", "delay") and seen_cond[0]:
+            pending.clear()               # the conditionals after the wait are over
+            seen_cond[0] = False
         if name in ("barrier", "delay"):
             i += 1
             continue
@@ -84,6 +131,11 @@ def wait_footprint(qc):
                 j += 1
             mid = later_ops(j - 1)
             measured = [pos[qc.find_bit(g.qubits[0]).index] for g in group]
+            if span:
+                pending.clear()           # a new read closes the waits before it
+                seen_cond[0] = False
+            if mid and span:
+                pending.append(len(waits))
             if mid:
                 carriers = set()
                 excited = 0.0
@@ -115,8 +167,11 @@ def wait_footprint(qc):
                         new.append((p * probs[v], s2, b2))
                 branches = new
             i = j
+            if span:
+                recheck()
             continue
         if name == "if_else":
+            seen_cond[0] = True
             tgt, val = op.condition
             if type(tgt).__name__ == "ClassicalRegister":
                 idx = [qc.find_bit(x).index for x in tgt]
@@ -135,10 +190,14 @@ def wait_footprint(qc):
                 new.append((p, sv, bits))
             branches = new
             i += 1
+            if span:
+                recheck()
             continue
         qs = [pos[qc.find_bit(q).index] for q in ins.qubits]
         branches = [(p, sv.evolve(op, qs), bits) for p, sv, bits in branches]
         i += 1
+        if span and pending:
+            recheck()
     counts = [len(w["carriers"]) for w in waits]
     return dict(waits=waits, max=max(counts, default=0), total=sum(counts), carrier_waits=sum(counts),
                 excited_waits=sum(w["excited"] for w in waits), qubits=act)

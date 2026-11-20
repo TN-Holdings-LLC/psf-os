@@ -702,7 +702,7 @@ def _item_extra(tag, a, succ, spec):
 
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
-          strict_cz=False, footprint=False, sentinel_over_test=False):
+          strict_cz=False, footprint=False, sentinel_over_test=False, fence=False):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -724,7 +724,14 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     sentinel_over_test (after-2026-11-20, home's candidate 4; default False: the ring as before, byte for byte): the
     ring sentinel's placement prefers, at the same ring length, an outline holding every item's chain (on 2026-11-19 the
     ring did not hold the qubits that carried IPE); the manifest and the build report record sentinel_cover (asked,
-    covered, all). Nothing is refused when the cover is partial: it is recorded."""
+    covered, all). Nothing is refused when the cover is partial: it is recorded.
+    fence (after-2026-11-20, the workplace VS's finding; default False: as before, byte for byte): every item's ff and
+    off arms get a barrier on every qubit before each mid-circuit measurement group and after each run of
+    conditionals (psf_os.footprint.fence_waits) before compiling, so that the compiler cannot merge gates across a
+    wait (on the compiled IPE the target otherwise waited in a superposition). The records carry fence=True.
+    footprint (changed the same day, after the workplace VS's finding): the records carry the footprint of each arm
+    as sent (compiled, span=True: the whole wait) as `sent` and its max / total first, and the item as written beside
+    (`written`)."""
     from psf_os import job as J
     from psf_os import user2d as U
     if pack_fixed:
@@ -743,6 +750,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     prepared = []
     for tag, qc, spec in items:
         a, qc, off, succ, spec = _prepare(tag, qc, spec)
+        if fence:
+            from psf_os.footprint import fence_waits
+            qc, off = fence_waits(qc), fence_waits(off)
         try:
             pl = given_chain(dev, chains[tag], a["n"]) if tag in chains else place(dev, a["n"])
         except Refused as e:
@@ -768,6 +778,14 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             from psf_os.footprint import wait_footprint
             f = wait_footprint(qc)
             fp = dict(max=f["max"], total=f["total"], carriers=[w["carriers"] for w in f["waits"]])
+            if True:
+                # the footprint as sent (compiled, span: the whole wait), first; as written beside (the workplace
+                # VS, 2026-11-20: the compiler can merge gates across a wait, so the written count can be smaller)
+                sent = {}
+                for arm in ("ff", "off"):
+                    g = wait_footprint(arms[arm], span=True)
+                    sent[arm] = dict(max=g["max"], total=g["total"], carriers=[w["carriers"] for w in g["waits"]])
+                fp = dict(sent=sent, written=fp, max=sent["ff"]["max"], total=sent["ff"]["total"])
         prepared.append((tag, a, succ, spec, pl, arms, chk, written if strict_cz else None, fp))
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
@@ -794,6 +812,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                       kind, [c], [dict(input="f", setting="z")],
                       extra=dict(extra, ff_arm=arm, cz=cz_count(c), checks=chk[arm],
                                  **({"cz_written": written[arm]} if written else {}),
+                                 **({"fence": True} if fence else {}),
                                  **({"wait_footprint": fp} if fp is not None else {})), valid=True, **common)
         c = arms["ff"]
         rep_items[tag] = dict(n=a["n"], chain=chain, cz=cz_count(c), off_cz=cz_count(arms["off"]),
