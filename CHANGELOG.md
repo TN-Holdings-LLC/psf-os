@@ -31,6 +31,30 @@ in |1> is the same as the superposition (-0.0042). That is one night on one devi
 - `build_bundle`, `build_pack_fixed` and the other builders are unchanged (no parking).
 - Tests: `tests/test_park_default.py` (10).
 
+## Unreleased (branch ledger-replay-2026-11-21, from loop-paired-2026-11-21 a164fc5; not declared)
+
+The ledger's path checked without the device (the home instruction of 2026-11-21, the owner's decision of 2026-11-21
+0:3x JST). Off by default: a night without `replay_from` builds, runs, rules and verifies as before.
+
+- **Replay** (`psf_os.loop.start(..., replay_from=RECORD)`, dry runs only, never with noise):
+  - Each job of the dry night is answered from a recorded night's raw counts (`replay_job`) instead of a simulation.
+  - A test circuit is looked up by its cell name and its gates (`psf_os.gatehash`). The ring sentinel is looked up by
+    its name only: it is never judged, and its synthesis follows the versions.
+  - The recorded job that holds most of the job's cells is the primary source. A cell it lacks comes from another
+    recorded job, and `replay.json` names the source of every cell.
+  - A circuit the record does not hold stops the night: "記録にない", not resumable, nothing written into the job.
+    There is no fall back to a simulation.
+  - A replayed night's builds are the device night's (`Night.build_dry`: no dry Clifford sentinel).
+  - `verify` answers every replayed job again from the record and compares the counts.
+- **A broken ledger is not used and is named** (`ledger_load`, `ledger_start`). Before this branch, such a ledger
+  stopped the night with a Python error. These cases now give `why` "ledger unreadable (...)", or a `per_key` reason:
+  - a file that is not JSON or not a list;
+  - a last line that is not a night;
+  - `last_stacks` that is not a table;
+  - a key whose stack is not a list of layers.
+  A good ledger gives the same decision as before.
+- Tests: `tests/test_loop_replay.py` (7).
+
 ## Unreleased (branch loop-paired-2026-11-21, from after-2026-11-20; a prototype, not declared)
 
 The loop compares inside one job (the home instruction of 2026-11-21, the owner's decision of 2026-11-20). Everything

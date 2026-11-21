@@ -31,6 +31,12 @@ What psf-os holds (no circuit of any one test):
     score, rule; finish: compound, predictions, job timing, zip. Every step is skipped when its output exists, so
     `resume` continues where the night stopped; a job folder holding a submission.json is never submitted again.
     `verify` rebuilds, re-scores and re-rules from the records: SAME / DIFFERENT per item.
+  * replay (`start(..., replay_from=RECORD)`, ledger-replay-2026-11-21; off by default): a dry night whose jobs are
+    answered from a recorded night's raw counts instead of a simulation. Each built circuit is looked up in the
+    record by its cell name and its gates (psf_os.gatehash); the ring sentinel by its name only (it is never judged
+    and its synthesis follows the versions). A circuit the record does not hold stops the night ("記録にない",
+    not resumable): there is no silent fall back to a simulation. The builds of a replayed night are the device
+    night's (no dry Clifford sentinel). Every job's replay.json names the recorded job of every cell.
 
 The experiment (the circuits, their scores, the first rule, the diagnostics) is given from outside as an object with
 the methods listed in `Experiment` (the lab notebook's gpu/os_loop.py is the one for the RUS chain). IBM is touched only
@@ -367,7 +373,29 @@ def next_stacks_paired(rounds, rungs=RUNGS, q_choice=None, k_max=4, budget=240.0
 # ------------------------------------------------------------------------------------------------ the ledger
 
 def ledger_load(path):
-    return json.load(open(path)) if path and os.path.exists(path) else []
+    """The ledger's lines. A file that is not a JSON list (ledger-replay-2026-11-21: before, the night stopped with a
+    Python error) is read as one line {"unreadable": why}, which ledger_start does not use and names."""
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        d = json.load(open(path))
+    except (OSError, ValueError) as exc:
+        return [dict(unreadable=f"not JSON ({type(exc).__name__})")]
+    if not isinstance(d, list):
+        return [dict(unreadable=f"not a list of nights ({type(d).__name__})")]
+    return d
+
+
+def _ledger_line_problem(last):
+    """Why the ledger's last line cannot be used as a line, or None."""
+    if not isinstance(last, dict):
+        return f"its last line is not a night ({type(last).__name__})"
+    if "unreadable" in last:
+        return f"the file is {last['unreadable']}"
+    ls = last.get("last_stacks")
+    if ls is not None and not isinstance(ls, dict):
+        return f"its last_stacks is not a table of keys ({type(ls).__name__})"
+    return None
 
 
 def ledger_start(ledger, device, cal_time, stacks, family):
@@ -380,6 +408,10 @@ def ledger_start(ledger, device, cal_time, stacks, family):
         dec["why"] = "no ledger"
         return out, dec
     last = ledger[-1]
+    bad = _ledger_line_problem(last)
+    if bad:
+        dec["why"] = f"ledger unreadable ({bad}): start from tonight's diagnostics"
+        return out, dec
     dec["last_night"] = dict(night=last.get("night"), device=last.get("device"),
                              calibration_time=last.get("calibration_time"))
     if last.get("device") != device:
@@ -393,6 +425,9 @@ def ledger_start(ledger, device, cal_time, stacks, family):
         prev = (last.get("last_stacks") or {}).get(k)
         if prev is None:
             dec["per_key"][k] = "no stack for this key in the ledger"
+            continue
+        if not (isinstance(prev, list) and prev and all(isinstance(x, str) for x in prev)):
+            dec["per_key"][k] = f"the ledger's stack for this key is not a list of layers ({prev!r}): ledger not used"
             continue
         if family(prev[0]) != family(st[0]):
             dec["per_key"][k] = (f"diagnostics disagree (tonight {'+'.join(st)}, ledger {'+'.join(prev)}): the "
@@ -433,6 +468,88 @@ def budget_text(spent, est, budget, k):
             f"({spent + est:.1f} s > {budget:.0f} s); round {k} not built, nothing more sent")
 
 
+# ------------------------------------------------------------------------------------------------ replay
+
+class NotInRecord(Exception):
+    """A circuit of a replayed night that the record does not hold."""
+
+
+def _record_jobs(record):
+    """[(folder name, job dir)] of every recorded job with raw counts, in name order."""
+    out = []
+    for d in sorted(os.listdir(record)):
+        j = os.path.join(record, d, "job")
+        if os.path.exists(os.path.join(j, "raw_counts.json")) and os.path.exists(os.path.join(j, "manifest.json")):
+            out.append((d, j))
+    return out
+
+
+def _cells_of(job_dir):
+    """[(cell name, role, point, gate digest)] per pub, in pub order."""
+    from qiskit import qpy
+    from psf_os.gatehash import circuits_digest
+    man = json.load(open(os.path.join(job_dir, "manifest.json")))
+    cells = {c["cell"]: c for c in man["cells"]}
+    cs = qpy.load(open(os.path.join(job_dir, "circuits.qpy"), "rb"))
+    out = []
+    for p, c in zip(man["pubs"], cs):
+        cell = cells[p["cell"]]
+        out.append((cell["name"], cell["role"], p["point"], circuits_digest([c])))
+    return out
+
+
+def replay_job(record, folder):
+    """Answer the job in `folder` from the recorded night `record`: job/raw_counts.json (rows in this job's pub order),
+    job/submission.json (local, replay) and replay.json. The recorded job holding the most of this job's test cells is
+    the primary source; a cell it lacks comes from the first other recorded job holding it (name and gates equal).
+    The sentinel is taken by its name from the primary source. Raises NotInRecord, writing nothing, when a test
+    circuit is in no recorded job."""
+    job = os.path.join(folder, "job")
+    new = _cells_of(job)
+    srcs = []
+    for name, j in _record_jobs(record):
+        cells = _cells_of(j)
+        rows = json.load(open(os.path.join(j, "raw_counts.json")))["rows"]
+        idx = {}
+        for k, (n, role, pt, dg) in enumerate(cells):
+            key = (n, pt, "sentinel") if role == "sentinel" else (n, pt, dg)
+            idx.setdefault(key, rows[k]["counts"])
+        srcs.append((name, idx))
+    keys = [(n, pt, "sentinel") if role == "sentinel" else (n, pt, dg) for n, role, pt, dg in new]
+    test = [k for k, (_, role, _, _) in zip(keys, new) if role != "sentinel"]
+    if not srcs:
+        raise NotInRecord(f"記録にない: the record {record} holds no job with raw counts")
+    # the most of this job's test cells; at a tie the recorded job of the same name (a night that ran the same
+    # circuits in two rounds answers each round from its own job), then the first in name order
+    tag = os.path.basename(os.path.abspath(folder))
+    primary = max(srcs, key=lambda s: (sum(1 for k in test if k in s[1]), s[0] == tag))
+    order = [primary] + [s for s in srcs if s is not primary]
+    missing, rows, source = [], [], []
+    for k, (n, role, pt, _) in zip(keys, new):
+        got = next(((nm, idx[k]) for nm, idx in order if k in idx), None)
+        if got is None:
+            missing.append(f"{n}" + (f"[{pt}]" if pt else ""))
+            continue
+        rows.append(dict(pub=len(rows), counts=got[1]))
+        source.append(dict(cell=n, point=pt, role=role, from_job=got[0]))
+    if missing:
+        raise NotInRecord(f"記録にない: {len(missing)} of {len(new)} circuits of {os.path.basename(folder)} are in no "
+                          f"recorded job of {os.path.basename(os.path.abspath(record))} (name and gates): "
+                          + ", ".join(missing[:12]) + (" ..." if len(missing) > 12 else ""))
+    man = json.load(open(os.path.join(job, "manifest.json")))
+    from_jobs = sorted({s["from_job"] for s in source if s["role"] != "sentinel"})
+    json.dump(dict(backend=man["fetch"]["backend"], job_id=f"replay:{primary[0]}", local=True,
+                   replay_from=os.path.abspath(record), submitted=now()),
+              open(os.path.join(job, "submission.json"), "w"), indent=1)
+    json.dump(dict(fetched=now(), job_id=f"replay:{primary[0]}", status="DONE", metrics=None, rows=rows,
+                   replay_from=os.path.abspath(record)),
+              open(os.path.join(job, "raw_counts.json"), "w"), indent=1)
+    rep_ = dict(record=os.path.abspath(record), primary=primary[0], test_cells_from=from_jobs,
+                one_recorded_job=len(from_jobs) <= 1, cells=source)
+    json.dump(rep_, open(os.path.join(folder, "replay.json"), "w"), indent=1)
+    return rep_
+
+
 class Night:
     """One night in OUT. cfg (OUT/run.json): dry, dry_devdir, noise, k_max, budget, rungs, ledger, zip, device."""
 
@@ -465,12 +582,26 @@ class Night:
     def device_dir(self):
         return os.path.join(self.out, "fetch_in", self.cfg()["device"], "dev")
 
+    def build_dry(self):
+        """The experiment's build flag: dry, except on a replayed night (its circuits are the device night's)."""
+        c = self.cfg()
+        return bool(c["dry"]) and not c.get("replay_from")
+
     # ---------------------------------------------------------------------------------------------- IBM or local
     def submit(self, folder):
         job = os.path.join(folder, "job")
         tag = os.path.basename(folder)
         if os.path.exists(os.path.join(job, "submission.json")):
             self.log(f"{tag}: already submitted (submission.json), not sent again")
+            return True
+        if self.cfg().get("replay_from"):
+            try:
+                r = replay_job(self.cfg()["replay_from"], folder)
+            except NotInRecord as exc:
+                self.replay_stop = str(exc)
+                return False
+            self.log(f"{tag}: replayed from the record (primary {r['primary']}; test cells from "
+                     f"{', '.join(r['test_cells_from'])})")
             return True
         if self.cfg()["dry"]:
             seed = self.exp.dry_seed(tag)
@@ -571,6 +702,8 @@ class Night:
             if not self.budget_ok(folder):
                 return json.load(open(os.path.join(self.out, "stop.json")))
             if not self.submit(folder):
+                if getattr(self, "replay_stop", None):
+                    return self.stop(f"{name}: {self.replay_stop}", replay_missing=True)
                 return self.stop(f"{name}: submission refused or failed (see run_log.txt)")
         st = self.collect(folder)
         if st == "WAIT":
@@ -594,7 +727,7 @@ class Night:
             if not os.path.exists(folder):
                 try:
                     _quiet(build, os.path.join(self.out, f"build_{tag}.txt"), self.device_dir(), folder,
-                           self.cfg()["dry"])
+                           self.build_dry())
                 except (Exception, SystemExit) as exc:  # noqa: BLE001
                     self.stop(f"{tag}: build refused ({type(exc).__name__}: {exc})")
                     return False
@@ -634,7 +767,7 @@ class Night:
         tmp = tempfile.mkdtemp(prefix="loop_est_")
         try:
             d = os.path.join(tmp, "r")
-            ok = _quiet(self.exp.build, os.path.join(tmp, "x.txt"), self.device_dir(), d, rule_path, self.cfg()["dry"])
+            ok = _quiet(self.exp.build, os.path.join(tmp, "x.txt"), self.device_dir(), d, rule_path, self.build_dry())
             if ok is False or not os.path.exists(os.path.join(d, "build.json")):
                 raise SystemExit("the round's build was refused: " + open(os.path.join(tmp, "x.txt")).read()[-300:])
             return float(json.load(open(os.path.join(d, "build.json")))["qpu_seconds_model"])
@@ -674,7 +807,7 @@ class Night:
                                      estimate_s=est, budget_s=c["budget"])
                 try:
                     ok = _quiet(self.exp.build, os.path.join(self.out, f"build_r{k}.txt"), self.device_dir(), folder,
-                                rule_k, c["dry"])
+                                rule_k, self.build_dry())
                 except (Exception, SystemExit) as exc:  # noqa: BLE001
                     return self.stop(f"r{k}: build refused ({type(exc).__name__}: {exc})", rounds=k - 1)
                 if ok is False or not os.path.isdir(os.path.join(folder, "job")):
@@ -789,13 +922,30 @@ def _park_now():
     return bool(FF.PARK_DEFAULT)
 
 
+def _park_for(replay_from):
+    """The park setting of a new night (release-0.3.0): the default, except for a replay, which takes the recorded
+    night's own setting (its run.json's "park", False when absent), so that its jobs are the recorded circuits."""
+    if not replay_from:
+        return _park_now()
+    p = os.path.join(replay_from, "run.json")
+    return bool(json.load(open(p)).get("park", False)) if os.path.exists(p) else False
+
+
 def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=RUNGS, ledger=None, zip_path=None,
-          extra=None, paired=False):
+          extra=None, paired=False, replay_from=None):
     """A new night in OUT (refused if OUT exists). Device runs need zip_path; noise / k_max / budget are for dry runs.
     paired (loop-paired-2026-11-21; default False: the cfg and the night as before): the paired rule; the experiment's
-    build reads the rule's candidates."""
+    build reads the rule's candidates.
+    replay_from (ledger-replay-2026-11-21; default None: the cfg and the night as before): a recorded night's folder
+    whose raw counts answer this dry night's jobs (replay_job); dry runs only, and never with noise."""
     if os.path.exists(out):
         raise SystemExit(f"{out} exists: use resume")
+    if replay_from and not dry_devdir:
+        raise SystemExit("replay_from is for dry runs only (give dry_devdir, e.g. the record's fetch_in device)")
+    if replay_from and noise:
+        raise SystemExit("replay_from answers the jobs from the record: no noise")
+    if replay_from and not os.path.isdir(replay_from):
+        raise SystemExit(f"replay_from: {replay_from} is not a folder")
     if not dry_devdir and (noise or k_max or budget):
         raise SystemExit("noise, k_max and budget are for dry runs only")
     if not dry_devdir and not zip_path:
@@ -807,7 +957,8 @@ def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=
                ledger=os.path.abspath(ledger) if ledger else None, zip=os.path.abspath(zip_path) if zip_path else None,
                started=now(), device=None, experiment=exp.name, **(extra or {}),
                **({"paired": True} if paired else {}),
-               **({"park": True} if _park_now() else {}))
+               **({"replay_from": os.path.abspath(replay_from)} if replay_from else {}),
+               **({"park": True} if _park_for(replay_from) else {}))
     json.dump(cfg, open(os.path.join(out, "run.json"), "w"), indent=1)
     return Night(out, exp)
 
@@ -901,6 +1052,7 @@ def _verify(out, exp, resim=False):
     out = os.path.abspath(out)
     cfg = json.load(open(os.path.join(out, "run.json")))
     devdir = os.path.join(out, "fetch_in", cfg["device"], "dev")
+    bdry = bool(cfg["dry"]) and not cfg.get("replay_from")      # a replayed night's builds are the device night's
     lines, bad = [], []
 
     unchecked = []
@@ -944,7 +1096,7 @@ def _verify(out, exp, resim=False):
             if not os.path.isdir(rec):
                 continue
             new = os.path.join(tmp, tag)
-            _quiet(build, os.path.join(tmp, "x.txt"), devdir, new, cfg["dry"])
+            _quiet(build, os.path.join(tmp, "x.txt"), devdir, new, bdry)
             j = job_of(rec)
             note(f"{tag} job rebuilt", same_job(j, os.path.join(new, "job")) if j else "no job recorded")
             if os.path.exists(os.path.join(rec, scores_file)):
@@ -974,7 +1126,7 @@ def _verify(out, exp, resim=False):
             if not os.path.isdir(rec):
                 break
             new = os.path.join(tmp, f"r{k}")
-            _quiet(exp.build, os.path.join(tmp, "x.txt"), devdir, new, os.path.join(out, f"RULE{k}.json"), cfg["dry"])
+            _quiet(exp.build, os.path.join(tmp, "x.txt"), devdir, new, os.path.join(out, f"RULE{k}.json"), bdry)
             j = job_of(rec)
             if j:
                 note(f"r{k} job rebuilt", same_job(j, os.path.join(new, "job")))
@@ -993,7 +1145,23 @@ def _verify(out, exp, resim=False):
                             between_job_sigma=cfg.get("between_job_sigma"))
                     note(f"RULE{k + 1}.json re-ruled", first_difference(json.load(open(nxt)), Rn))
             k += 1
-        if resim and cfg["dry"]:
+        if cfg.get("replay_from"):
+            # a replayed night: every job's counts are answered again from the record and compared
+            for d in sorted(os.listdir(out)):
+                rec = os.path.join(out, d)
+                if not os.path.exists(os.path.join(rec, "replay.json")):
+                    continue
+                cp = os.path.join(tmp, "replay", d)            # the same folder name: replay_job's tie rule
+                shutil.copytree(os.path.join(rec, "job"), os.path.join(cp, "job"),
+                                ignore=shutil.ignore_patterns("raw_counts.json", "submission.json"))
+                try:
+                    replay_job(cfg["replay_from"], cp)
+                    diff = first_difference(json.load(open(os.path.join(rec, "job", "raw_counts.json")))["rows"],
+                                            json.load(open(os.path.join(cp, "job", "raw_counts.json")))["rows"])
+                except NotInRecord as exc:
+                    diff = str(exc)
+                note(f"{d} replayed again from the record", diff)
+        elif resim and cfg["dry"]:
             for d in sorted(os.listdir(out)):
                 rec = os.path.join(out, d)
                 if not os.path.exists(os.path.join(rec, "job", "raw_counts.json")):
