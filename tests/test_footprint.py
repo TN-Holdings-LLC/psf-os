@@ -92,7 +92,8 @@ def test_fence_keeps_the_target_out_of_the_wait(tmp_path):
     qc, succ = AP.ipe(3, 5, True)
     off, _ = AP.ipe(3, 5, False)
     item = [("ipe", qc, dict(success=succ, off_circuit=off, form="blocks"))]
-    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24), footprint=True)
+    # park-default-2026-11-21: this test is about the unparked IPE (the fence alone), so parking is off here
+    kw = dict(sentinel_spec=dict(kind="echo_clifford", D=24), footprint=True, park=False)
     r0 = FF.build(dev, item, str(tmp_path / "plain"), **kw)
     r1 = FF.build(dev, item, str(tmp_path / "fence"), fence=True, **kw)
     assert r0["items"]["ipe"]["footprint_max"] >= 1 and r1["items"]["ipe"]["footprint_max"] == 0
@@ -111,8 +112,9 @@ def test_fence_keeps_the_target_out_of_the_wait(tmp_path):
     assert FF.exact_distribution(fence_waits(qc, conditionals=True)) == FF.exact_distribution(qc)
     rec = json.load(open(os.path.join(str(tmp_path / "fence"), "runs", "ff_ipe.json")))
     assert '"fence": true' in json.dumps(rec)
-    FF.build(dev, item, str(tmp_path / "plain2"), sentinel_spec=dict(kind="echo_clifford", D=24))
-    FF.build(dev, item, str(tmp_path / "plain3"), sentinel_spec=dict(kind="echo_clifford", D=24), fence=False)
+    FF.build(dev, item, str(tmp_path / "plain2"), sentinel_spec=dict(kind="echo_clifford", D=24), park=False)
+    FF.build(dev, item, str(tmp_path / "plain3"), sentinel_spec=dict(kind="echo_clifford", D=24), fence=False,
+             park=False)
     assert open(str(tmp_path / "plain2" / "job" / "circuits.qpy"), "rb").read() == \
         open(str(tmp_path / "plain3" / "job" / "circuits.qpy"), "rb").read()
 

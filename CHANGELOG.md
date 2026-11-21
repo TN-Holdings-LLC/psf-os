@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased (branch park-default-2026-11-21, from loop-paired-2026-11-21 a164fc5)
+
+A waiting qubit is parked in |0> by default (the owner's decision of 2026-11-21 9:59 JST). The weekend's test C
+(results/weekend-shared-night-2026-11-21, IPE n = 4) gave: waiting in |0> keeps +0.0387 (2 SE 0.0045) more; waiting
+in |1> is the same as the superposition (-0.0042). That is one night on one device, so the switch stays.
+
+- **`psf_os.footprint.park_waits(qc)`**:
+  - It finds every wait: a mid-circuit measurement group or a run of conditionals, fenced as
+    `fence_waits(conditionals=True)`.
+  - It puts in |0> each qubit that waits there in |1> in every branch: X before the wait's fence, X after the fence
+    that closes it. The fences keep the pair from cancelling and keep gates out of the wait.
+  - It leaves alone qubits in |0>, carriers (superposition or entangled) and qubits whose basis value depends on the
+    branch.
+  - States are counted as `wait_footprint` counts them (branching, exact).
+  - The exact distribution of the classical bits must be unchanged (`exact_distribution`); otherwise ValueError.
+  - When nothing is parked, the circuit itself is returned, unfenced.
+- **`feedforward.build(park=None)`**:
+  - None means `PARK_DEFAULT`, which is True. The context `park_default(value)` sets it for a block.
+  - The ff and off arms are parked, and each compiled CZ count must equal the unparked one; otherwise refused.
+  - With park on, records, `checks.json` and the build report carry "park": where, which qubits (logical and
+    physical), and excited before and after.
+  - With `park=False` nothing is added, byte for byte as before. An item with nothing to park is built as without
+    parking.
+  - `park_of_record(rec)` gives False when the key is absent.
+- **`loop`**:
+  - `start` records "park": true in run.json for new nights.
+  - `Night.go` and `verify` build under run.json's "park", False when absent. So a recorded night is rebuilt as it
+    was built, and a resumed old night goes on as it began.
+- `build_bundle`, `build_pack_fixed` and the other builders are unchanged (no parking).
+- Tests: `tests/test_park_default.py` (10).
+
 ## Unreleased (branch loop-paired-2026-11-21, from after-2026-11-20; a prototype, not declared)
 
 The loop compares inside one job (the home instruction of 2026-11-21, the owner's decision of 2026-11-20). Everything

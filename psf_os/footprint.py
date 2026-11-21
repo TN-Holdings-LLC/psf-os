@@ -249,6 +249,192 @@ def footprint_or_none(qc, span=True, conditionals=True):
                 carriers=[w["carriers"] for w in f["waits"]])
 
 
+# ------------------------------------------------------------------------------------------------ parking (park-default)
+# park-default-2026-11-21 (the owner's decision of 2026-11-21 9:59 JST, after the weekend's test C: waiting in |0>
+# kept +0.0387 (2 SE 0.0045) more on IPE n = 4, waiting in |1> the same as the superposition; one night, one device).
+# A qubit that waits in |1> in every branch during a mid-circuit measurement or a run of conditionals is put in |0>
+# for the wait: X before the wait's fence, X after it. Qubits in |0>, carriers (superposition, entangled) and qubits
+# whose basis value depends on the branch are left as they are.
+
+def exact_distribution(qc):
+    """The exact distribution of qc's classical bits (branching over every measurement and reset; conditional blocks
+    applied per branch), {bit string (clbit 0 rightmost): probability}. Up to MAX_QUBITS active qubits and MAX_WORK."""
+    branches, _ = _simulate(qc, ())
+    out = {}
+    ncl = qc.num_clbits
+    for p, _sv, bits in branches:
+        key = "".join(str(bits[ncl - 1 - i]) for i in range(ncl))
+        out[key] = out.get(key, 0.0) + p
+    return out
+
+
+def _simulate(qc, stops):
+    """Branches (p, statevector over the active qubits, clbits) after the whole circuit, and at each instruction
+    index in `stops` (before it) the branch list then."""
+    from qiskit.quantum_info import Statevector
+    act = _active(qc)
+    if len(act) > MAX_QUBITS:
+        raise ValueError(f"{len(act)} active qubits: above {MAX_QUBITS}")
+    pos = {q: i for i, q in enumerate(act)}
+    n = max(len(act), 1)
+    ncl = qc.num_clbits
+    branches = [(1.0, Statevector.from_label("0" * n), [0] * ncl)]
+    at = {}
+    stops = set(stops)
+
+    def collapse(brs, k, cb):
+        new = []
+        for p, sv, bits in brs:
+            probs = sv.probabilities([k])
+            for v in (0, 1):
+                if probs[v] < 1e-15:
+                    continue
+                proj = np.zeros((2, 2))
+                proj[v, v] = 1.0
+                s2 = Statevector(sv.evolve(proj, [k]).data / np.sqrt(probs[v]))
+                b2 = list(bits)
+                if cb is not None:
+                    b2[cb] = v
+                elif v == 1:                                   # reset: flip the |1> branch back to |0>
+                    s2 = s2.evolve(np.array([[0, 1], [1, 0]]), [k])
+                new.append((p * probs[v], s2, b2))
+        if len(new) * 2 ** n > MAX_WORK:
+            raise ValueError(f"{len(new)} branches on {n} qubits: above the bound {MAX_WORK}")
+        return new
+
+    def apply(brs, circ, qmap, ins_list):
+        for bi in ins_list:
+            name = bi.operation.name
+            if name in ("barrier", "delay"):
+                continue
+            qs = [qmap[circ.find_bit(q).index] for q in bi.qubits]
+            if name == "measure":
+                raise ValueError("a measurement inside a conditional block is not supported here")
+            brs = [(p, sv.evolve(bi.operation, qs), b) for p, sv, b in brs]
+        return brs
+
+    top = {qc.find_bit(q).index: pos.get(qc.find_bit(q).index) for q in qc.qubits}
+    for i, ins in enumerate(qc.data):
+        if i in stops:
+            at[i] = list(branches)
+        op = ins.operation
+        name = op.name
+        if name in ("barrier", "delay"):
+            continue
+        if name == "measure":
+            k = pos[qc.find_bit(ins.qubits[0]).index]
+            branches = collapse(branches, k, qc.find_bit(ins.clbits[0]).index)
+            continue
+        if name == "reset":
+            branches = collapse(branches, pos[qc.find_bit(ins.qubits[0]).index], None)
+            continue
+        if name == "if_else":
+            tgt, val = op.condition
+            idx = ([qc.find_bit(x).index for x in tgt] if type(tgt).__name__ == "ClassicalRegister"
+                   else [qc.find_bit(tgt).index])
+            new = []
+            for p, sv, bits in branches:
+                v = sum(bits[b] << t for t, b in enumerate(idx))
+                blk = op.blocks[0] if v == int(val) else (op.blocks[1] if len(op.blocks) > 1 else None)
+                if blk is not None:
+                    qmap = {blk.find_bit(bq).index: top[qc.find_bit(q).index] for bq, q in zip(blk.qubits, ins.qubits)}
+                    sv = apply([(p, sv, bits)], blk, qmap, blk.data)[0][1]
+                new.append((p, sv, bits))
+            branches = new
+            continue
+        qs = [pos[qc.find_bit(q).index] for q in ins.qubits]
+        branches = [(p, sv.evolve(op, qs), bits) for p, sv, bits in branches]
+    return branches, dict(at=at, act=act, pos=pos)
+
+
+def _windows(f):
+    """The waits of a fenced circuit f (fence_waits(qc, conditionals=True)): a full fence followed by a measurement
+    group (and the run of conditionals after it, up to the fence that closes it) or by a run of conditionals.
+    Returns [dict(start, end, close, kind, involved)]: start the index of the opening fence; end the index after
+    which the wait is over (the closing fence, or the last measurement when no conditional follows: close=False,
+    a fence is then added after it); involved the qubit indices measured or inside the conditionals."""
+    data = list(f.data)
+    nq = f.num_qubits
+    full = lambda ins: ins.operation.name == "barrier" and len(ins.qubits) == nq
+    out = []
+    i = 0
+    while i < len(data):
+        if full(data[i]) and i + 1 < len(data) and data[i + 1].operation.name in ("measure", "if_else"):
+            kind = "read" if data[i + 1].operation.name == "measure" else "conditional"
+            involved = set()
+            j = i + 1
+            while j < len(data) and data[j].operation.name == "measure":
+                involved.add(f.find_bit(data[j].qubits[0]).index)
+                j += 1
+            k = j
+            while k < len(data) and data[k].operation.name == "if_else":
+                involved |= {f.find_bit(q).index for q in data[k].qubits}
+                k += 1
+            if k > j and k < len(data) and full(data[k]):
+                out.append(dict(start=i, end=k, close=True, kind=kind, involved=sorted(involved)))
+                i = k
+                continue
+            if k == j and kind == "read":
+                if not any(x.operation.name not in ("measure", "barrier") for x in data[j:]):
+                    i = j                                      # final measurements: not a wait
+                    continue
+                out.append(dict(start=i, end=j - 1, close=False, kind=kind, involved=sorted(involved)))
+                i = j
+                continue
+        i += 1
+    return out
+
+
+def park_waits(qc):
+    """(circuit, info): qc with every waiting qubit that is in |1> in every branch put in |0> for the wait (X before
+    the wait's fence, X after its closing fence; the waits fenced as fence_waits(conditionals=True), so that the
+    compiler can neither cancel the pair nor move gates into the wait). When no qubit is parked, qc itself is
+    returned unchanged (not fenced) and info["parked"] is empty. Checked here: the exact distribution of the classical
+    bits is the same as qc's (else ValueError). Above the footprint's bounds: ValueError (the caller keeps qc)."""
+    f = fence_waits(qc, conditionals=True)
+    wins = _windows(f)
+    if not wins:
+        return qc, dict(parked=[], waits=0)
+    _, sim = _simulate(f, [w["start"] for w in wins])
+    act, pos = sim["act"], sim["pos"]
+    plan = []
+    for w in wins:
+        brs = sim["at"][w["start"]]
+        put = []
+        for q in act:
+            if q in w["involved"]:
+                continue
+            k = pos[q]
+            if all(p < EPS or (abs(_reduced(sv.data, k, len(act))[1, 1].real - 1) < EPS) for p, sv, _ in brs):
+                put.append(q)
+        plan.append(dict(w, qubits=put))
+    if not any(w["qubits"] for w in plan):
+        return qc, dict(parked=[], waits=len(wins))
+    before = {w["start"]: w["qubits"] for w in plan if w["qubits"]}
+    after = {w["end"]: w for w in plan if w["qubits"]}
+    out = f.copy_empty_like()
+    for i, ins in enumerate(f.data):
+        for q in before.get(i, ()):
+            out.x(q)
+        out.append(ins.operation, ins.qubits, ins.clbits)
+        if i in after:
+            w = after[i]
+            if not w["close"]:
+                out.barrier(list(out.qubits))
+            for q in w["qubits"]:
+                out.x(q)
+    d0, d1 = exact_distribution(qc), exact_distribution(out)
+    keys = set(d0) | set(d1)
+    if any(abs(d0.get(k, 0.0) - d1.get(k, 0.0)) > 1e-9 for k in keys):
+        raise ValueError("parking changed the noiseless distribution (not built)")
+    e0 = wait_footprint(f, conditionals=True)["excited_waits"]
+    e1 = wait_footprint(out, conditionals=True)["excited_waits"]
+    info = dict(parked=[dict(kind=w["kind"], qubits=w["qubits"]) for w in plan if w["qubits"]],
+                waits=len(wins), parked_waits=sum(1 for w in plan if w["qubits"]),
+                excited_before=round(float(e0), 6), excited_after=round(float(e1), 6))
+    return out, info
+
+
 def main(argv=None):
     import sys
     from qiskit import qpy

@@ -751,6 +751,13 @@ class Night:
             self.log(f"zipped to {z}")
 
     def go(self):
+        """The night under its own park setting (park-default-2026-11-21): run.json's "park", False when absent (a
+        night started before parking was the default), so a resumed old night builds as it began."""
+        from psf_os import feedforward as FF
+        with FF.park_default(bool(self.cfg().get("park", False))):
+            return self._go()
+
+    def _go(self):
         st = os.path.join(self.out, "stop.json")
         if os.path.exists(st):
             s = json.load(open(st))
@@ -777,6 +784,11 @@ def _read(p):
     return json.load(open(p)) if os.path.exists(p) else None
 
 
+def _park_now():
+    from psf_os import feedforward as FF
+    return bool(FF.PARK_DEFAULT)
+
+
 def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=RUNGS, ledger=None, zip_path=None,
           extra=None, paired=False):
     """A new night in OUT (refused if OUT exists). Device runs need zip_path; noise / k_max / budget are for dry runs.
@@ -794,7 +806,8 @@ def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=
                k_max=k_max or exp.k_max, budget=budget or exp.budget_s, rungs=list(rungs),
                ledger=os.path.abspath(ledger) if ledger else None, zip=os.path.abspath(zip_path) if zip_path else None,
                started=now(), device=None, experiment=exp.name, **(extra or {}),
-               **({"paired": True} if paired else {}))
+               **({"paired": True} if paired else {}),
+               **({"park": True} if _park_now() else {}))
     json.dump(cfg, open(os.path.join(out, "run.json"), "w"), indent=1)
     return Night(out, exp)
 
@@ -876,7 +889,15 @@ def same_job(rec_job, new_job):
 
 
 def verify(out, exp, resim=False):
-    """Rebuild, re-score and re-rule every step from the records: a line SAME / DIFFERENT per item."""
+    """Rebuild, re-score and re-rule every step from the records: a line SAME / DIFFERENT per item. The rebuilds use
+    the night's park setting (park-default-2026-11-21: run.json's "park", False when absent)."""
+    from psf_os import feedforward as FF
+    cfg = json.load(open(os.path.join(os.path.abspath(out), "run.json")))
+    with FF.park_default(bool(cfg.get("park", False))):
+        return _verify(out, exp, resim)
+
+
+def _verify(out, exp, resim=False):
     out = os.path.abspath(out)
     cfg = json.load(open(os.path.join(out, "run.json")))
     devdir = os.path.join(out, "fetch_in", cfg["device"], "dev")

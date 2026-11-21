@@ -726,9 +726,39 @@ def _write_checks(out, rows):
               open(os.path.join(out, CHECKS_FILE), "w"), indent=1)
 
 
+# park-default-2026-11-21: new builds park the qubits that wait in |1> (psf_os.footprint.park_waits); a build that
+# remakes a recorded night must not (its records hold no "park" key: read as False). PARK_DEFAULT is what build()
+# uses when park=None; park_default(value) sets it for a block (psf_os.loop.verify uses it).
+PARK_DEFAULT = True
+
+
+class park_default:
+    """Context manager: build()'s park default inside the block (park=None resolves to `value`)."""
+
+    def __init__(self, value):
+        self.value = bool(value)
+
+    def __enter__(self):
+        global PARK_DEFAULT
+        self.saved, PARK_DEFAULT = PARK_DEFAULT, self.value
+        return self
+
+    def __exit__(self, *exc):
+        global PARK_DEFAULT
+        PARK_DEFAULT = self.saved
+        return False
+
+
+def park_of_record(rec):
+    """The park setting a recorded build was made with: its "park" key, False when absent (every build before
+    park-default-2026-11-21)."""
+    v = (rec or {}).get("park", False)
+    return bool(v) if not isinstance(v, dict) else True
+
+
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
           strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record",
-          ff_only=()):
+          ff_only=(), park=None):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -766,6 +796,14 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     named here get their ff arm only (no off, no floor circuit in the job). For the paired loop: the incumbent's ff
     beside the candidate's three arms in one job; the incumbent's off and floor were measured when it was adopted.
     The records of such an item carry ff_only=True.
+    park (park-default-2026-11-21; None = PARK_DEFAULT, True unless set by park_default): in the ff and off arms,
+    every qubit that waits in |1> in every branch, while a mid-circuit measurement is read or a run of conditionals is
+    decided, is put in |0> for the wait (psf_os.footprint.park_waits: X before the wait's fence, X after it; the waits
+    fenced as fence_waits(conditionals=True)). Checked at build: the exact noiseless distribution of the classical
+    bits unchanged (park_waits), and the compiled CZ count of each arm the same as without parking; otherwise refused.
+    An item with nothing to park is built exactly as with park=False. With park True every record carries "park"
+    (where and what was parked, excited before and after); with park=False nothing is added, byte for byte as
+    before. A recorded build is remade with park_of_record(record) (no key: False).
     footprint (changed the same day, after the workplace VS's finding): the records carry the footprint of each arm
     as sent (compiled, span=True: the whole wait) as `sent` and its max / total first, and the item as written beside
     (`written`)."""
@@ -788,6 +826,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         raise Refused(f"chains given for unknown items {sorted(set(chains) - set(tags))}")
     if record_checks not in ("record", "off"):
         raise Refused(f"record_checks must be 'record' or 'off' (got {record_checks!r})")
+    park = PARK_DEFAULT if park is None else bool(park)
     comp = Compiler(dev)
     prepared = []
     check_rows = {}
@@ -796,6 +835,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         if fence:
             from psf_os.footprint import fence_waits
             qc, off = fence_waits(qc, conditionals=True), fence_waits(off, conditionals=True)
+        park_rec, unparked = None, None
+        if park:
+            park_rec, unparked, qc, off = _park_item(tag, qc, off)
         try:
             pl = given_chain(dev, chains[tag], a["n"]) if tag in chains else place(dev, a["n"])
         except Refused as e:
@@ -805,6 +847,15 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         for arm, logical in (("ff", qc), ("off", off)):
             arms[arm] = comp.run(on_device(logical, chain, dev.num_qubits))
         arms["floor"] = floor_of(arms["ff"])
+        if unparked is not None:
+            for arm, logical in (("ff", unparked[0]), ("off", unparked[1])):
+                if logical is None:
+                    continue
+                c0 = comp.run(on_device(logical, chain, dev.num_qubits))
+                if cz_count(c0) != cz_count(arms[arm]):
+                    raise Refused(f"{tag}: parking changed the compiled CZ count of the {arm} arm "
+                                  f"({cz_count(c0)} -> {cz_count(arms[arm])}): not built")
+            park_rec = _park_physical(park_rec, chain)
         chk = {arm: checks(dev, c, chain) for arm, c in arms.items()}
         if not all(all(v.values()) for v in chk.values()):
             raise Refused(f"{tag}: acceptance failed: {chk}")
@@ -812,6 +863,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             raise Refused(f"{tag}: the compiler removed the conditionals")
         if record_checks == "record":
             check_rows[tag] = _check_row(tag, qc, off, arms)
+            if park_rec is not None:
+                check_rows[tag]["park"] = park_rec
         if strict_cz:
             written = {"ff": cz_count(qc), "off": cz_count(off), "floor": cz_count(qc)}
             got = {arm: cz_count(c) for arm, c in arms.items()}
@@ -831,11 +884,11 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                     g = wait_footprint(arms[arm], span=True, conditionals=True)
                     sent[arm] = dict(max=g["max"], total=g["total"], carriers=[w["carriers"] for w in g["waits"]])
                 fp = dict(sent=sent, written=fp, max=sent["ff"]["max"], total=sent["ff"]["total"])
-        prepared.append((tag, a, succ, spec, pl, arms, chk, written if strict_cz else None, fp))
+        prepared.append((tag, a, succ, spec, pl, arms, chk, written if strict_cz else None, fp, park_rec))
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
     rep_items = {}
-    for tag, a, succ, spec, pl, arms, chk, written, fp in prepared:
+    for tag, a, succ, spec, pl, arms, chk, written, fp, park_rec in prepared:
         bound = spec.get("bound")
         chain = pl["chain"]
         labels = list(range(a["n"]))
@@ -861,7 +914,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                                  **({"cz_written": written[arm]} if written else {}),
                                  **({"fence": True} if fence else {}),
                                  **({"ff_only": True} if tag in ff_only else {}),
-                                 **({"wait_footprint": fp} if fp is not None else {})), valid=True, **common)
+                                 **({"wait_footprint": fp} if fp is not None else {}),
+                                 **({"park": park_rec} if park_rec is not None else {})), valid=True, **common)
         c = arms["ff"]
         rep_items[tag] = dict(n=a["n"], chain=chain, cz=cz_count(c), off_cz=cz_count(arms["off"]),
                               floor_cz=cz_count(arms["floor"]), depth=c.depth(),
@@ -869,7 +923,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                               **({"rus": extra["rus"], "cz_in_blocks": cz_count(c) - cz_count(arms["off"])}
                                  if "rus" in extra else {}),
                               **({"footprint_max": fp["max"], "footprint_total": fp["total"]} if fp is not None
-                                 else {}))
+                                 else {}),
+                              **({"park": park_rec} if park_rec is not None else {}))
     cover = _sentinel(dev, runs, shots, sentinel_spec,
                       cover=sorted({q for p in prepared for q in p[4]["chain"]}) if sentinel_over_test else None)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
@@ -882,8 +937,37 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                     "per shot), small against its per-shot term")
     if cover is not None:
         rep["sentinel_cover"] = cover
+    if park:
+        rep["park"] = True
     json.dump(rep, open(os.path.join(out, "build.json"), "w"), indent=1, default=str)
     return rep
+
+
+def _park_item(tag, qc, off):
+    """(record, unparked (qc, off) or None, qc, off) for build(park=True): park_waits on both arms. Nothing to park:
+    the arms unchanged and unparked None. Above the footprint's bounds: the arms unchanged, the record says why."""
+    from psf_os.footprint import park_waits
+    rec, new = {"park": True, "arms": {}}, {}
+    for arm, c in (("ff", qc), ("off", off)):
+        try:
+            c2, info = park_waits(c)
+        except ValueError as e:
+            if "changed the noiseless distribution" in str(e):
+                raise Refused(f"{tag}: {e}") from None
+            c2, info = c, dict(parked=[], skipped=str(e))
+        new[arm] = c2
+        rec["arms"][arm] = info
+    if new["ff"] is qc and new["off"] is off:
+        return rec, None, qc, off
+    return rec, (qc, off), new["ff"], new["off"]
+
+
+def _park_physical(rec, chain):
+    """The parked qubits also as physical qubits (chain[k] for logical k)."""
+    for info in rec["arms"].values():
+        for w in info.get("parked", []):
+            w["physical"] = [chain[q] for q in w["qubits"]]
+    return rec
 
 
 # ------------------------------------------------------------------------------------------------ bundled items
