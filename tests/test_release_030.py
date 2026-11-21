@@ -119,3 +119,20 @@ def test_build_pack_fixed_parks_the_ff_arms(tmp_path):
     assert r1["cz"] == r0["cz"] and all(r1["items"][t]["cz"] == r0["items"][t]["cz"] for t in ("ia", "ib"))
     FF.run_local(on)
     assert FF.cards(on)["ia"]["ff"]["share"] == 1.0
+
+
+def test_park_skip_holds_both_forms_in_one_job(tmp_path):
+    dev = Dv.fetch_fake("FakeFez")
+    items = [("pk", _ipe_like(), dict(success={2: 1})), ("pl", _ipe_like(), dict(success={2: 1}))]
+    out = str(tmp_path / "j")
+    FF.build(dev, items, out, shots=500, sentinel_spec=SPEC, park=True, park_skip=["pl"])
+    rk = json.load(open(os.path.join(out, "runs", "ff_pk.json")))
+    rl = json.load(open(os.path.join(out, "runs", "ff_pl.json")))
+    assert rk["park"]["arms"]["ff"]["parked"] and rl["park"] == {"park": False, "skipped": "park_skip"}
+    assert FF.park_of_record(rl) is False and FF.park_of_record(rk) is True
+    ref = str(tmp_path / "ref")
+    FF.build(dev, [("pl", _ipe_like(), dict(success={2: 1}))], ref, shots=500, sentinel_spec=SPEC, park=False)
+    assert open(os.path.join(out, "runs", "ff_pl.qpy"), "rb").read() == open(os.path.join(ref, "runs", "ff_pl.qpy"),
+                                                                             "rb").read()
+    with pytest.raises(FF.Refused, match="park_skip names unknown"):
+        FF.build(dev, items, str(tmp_path / "x"), shots=500, sentinel_spec=SPEC, park=True, park_skip=["zz"])

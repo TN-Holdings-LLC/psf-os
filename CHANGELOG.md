@@ -26,6 +26,8 @@ every entry SAME with this version, and `verify` gives SAME for the loops of 202
     n = 6. The RUS chains, the textbook circuit, the repetition code and decoy's rd2 have nothing to park
     (notes/park_default_2026-11-21).
 - **A test that compares with the unparked form says `park=False`** (the owner's rule of 2026-11-21).
+  `build(park=True, park_skip=[tags])` builds the named items unparked in the same job (the parked and unparked
+  form of one circuit side by side; their records say "park": {"park": false, "skipped": "park_skip"}).
 - **The safety guard.** A tool declared on another psf-os names it: `declared=` or the environment variable
   `PSF_OS_DECLARED`. If that version's park default differs from this one's, a build that does not say `park` is
   refused before anything is written. Any commit, or a version before 0.3.0, counts as not parking. For example, a

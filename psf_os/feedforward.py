@@ -777,14 +777,14 @@ def resolve_park(park, declared=None):
 
 def park_of_record(rec):
     """The park setting a recorded build was made with: its "park" key, False when absent (every build before
-    park-default-2026-11-21)."""
+    park-default-2026-11-21); an item skipped by park_skip reads False."""
     v = (rec or {}).get("park", False)
-    return bool(v) if not isinstance(v, dict) else True
+    return bool(v) if not isinstance(v, dict) else bool(v.get("park", True))
 
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
           strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record",
-          ff_only=(), park=None, declared=None):
+          ff_only=(), park=None, declared=None, park_skip=()):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -833,6 +833,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     declared (release-0.3.0; else the environment variable PSF_OS_DECLARED): the psf-os version a declaration fixed;
     with park=None the build is refused when that version's park default differs from this one's (resolve_park). The
     manifest names the version, the park setting and the declared version (psf_os_build).
+    park_skip (release-0.3.0; default (): every item as `park` says): with park on, the items named here are built
+    unparked (their records say "park": {"park": false, "skipped": "park_skip"}), so that a test can hold the parked
+    and the unparked form of the same circuit side by side in one job.
     footprint (changed the same day, after the workplace VS's finding): the records carry the footprint of each arm
     as sent (compiled, span=True: the whole wait) as `sent` and its max / total first, and the item as written beside
     (`written`)."""
@@ -857,6 +860,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     if record_checks not in ("record", "off"):
         raise Refused(f"record_checks must be 'record' or 'off' (got {record_checks!r})")
     park, park_how = resolve_park(park, declared)
+    park_skip = set(park_skip or ())
+    if park_skip - set(tags):
+        raise Refused(f"park_skip names unknown items {sorted(park_skip - set(tags))}")
     comp = Compiler(dev)
     prepared = []
     check_rows = {}
@@ -866,7 +872,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             from psf_os.footprint import fence_waits
             qc, off = fence_waits(qc, conditionals=True), fence_waits(off, conditionals=True)
         park_rec, unparked = None, None
-        if park:
+        if park and tag in park_skip:
+            park_rec = {"park": False, "skipped": "park_skip"}
+        elif park:
             park_rec, unparked, qc, off = _park_item(tag, qc, off)
         try:
             pl = given_chain(dev, chains[tag], a["n"]) if tag in chains else place(dev, a["n"])
