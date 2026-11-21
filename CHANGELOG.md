@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased (branch likely-park-2026-11-22, from v0.3.0; a 0.3.1 candidate, off by default)
+
+- **`footprint.park_likely(qc, threshold=0.5)`** and **`build(park_likely=False | True | [tags])`**.
+  - After `park`, every waiting qubit whose noiseless probability of |1> is above 0.5 (entangled ones too) gets an X
+    before and after the wait.
+  - The pair is kept by a **partial fence**: at those waits only, a barrier on the parked qubits and the wait's own
+    qubits. Every other qubit is left to the compiler as without fences.
+  - Checked as `park` is: the noiseless distribution, and each arm's compiled CZ against the unparked arms. A pair the
+    compiler would have cancelled unfenced therefore refuses the build.
+  - The records, checks.json and psf_os_build carry `park_likely`.
+  - Without the argument everything is 0.3.0's, byte for byte.
+- **Evidence:** results/rus-fence-night-2026-11-21 (ibm_fez). Parking the likely value on top of the full fence gave
+  NF +0.0877, P0 +0.0140 (both KEEPS MORE). The full fence itself cost P0 −0.0453 and P3 −0.0243, so M against D read
+  NF +0.079, P0 −0.031, P3 −0.022.
+- **Desk** (notes/likely_park_2026-11-22, illustrative damping): the partial fence keeps most of the parking (NF
+  +0.268 against D, of M's +0.324) and does not carry the full fence's effects. Never run on a device.
+- Tests: `tests/test_park_likely.py` (7).
+
 ## 0.3.0 (2026-11-21)
 
 The code is as sent to the device on 2026-11-21 at 11:00 CET (cedd90d; results/qpe-parked-night-2026-11-21);

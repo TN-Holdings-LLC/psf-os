@@ -435,6 +435,83 @@ def park_waits(qc):
     return out, info
 
 
+# ------------------------------------------------------------------------------------------------ the likely value
+# likely-park-2026-11-22 (a 0.3.1 candidate; off by default). On ibm_fez (results/rus-fence-night-2026-11-21) parking
+# the likely value, an X pair around each wait on every waiting qubit with P(|1>) > 0.5, gained on top of the full
+# fence (NF +0.088), while the full fence itself cost on P0 and P3 (-0.045, -0.024). Here the pair is kept by a partial
+# fence instead: at the waits where a qubit is parked only, a barrier on the parked qubits and the wait's own qubits
+# (measured there or inside its conditionals). Every other qubit is left to the compiler as without fences.
+
+def _fence_inserted(qc, f):
+    """Indices of f's instructions that fence_waits added to qc (f is qc with barriers inserted)."""
+    j, ins = 0, set()
+    qd = list(qc.data)
+    for i, x in enumerate(f.data):
+        if j < len(qd) and x.operation == qd[j].operation and list(x.qubits) == list(qd[j].qubits) and \
+                list(x.clbits) == list(qd[j].clbits):
+            j += 1
+        else:
+            ins.add(i)
+    if j != len(qd):
+        raise ValueError("fence_waits did more than add barriers")
+    return ins
+
+
+def park_likely(qc, threshold=0.5):
+    """(circuit, info): an X before and after each wait on every waiting qubit (neither measured there nor inside its
+    conditionals) whose noiseless probability of |1>, over the branches with their weights, is above `threshold`
+    (entangled qubits included: X X = I across a wait the qubit takes no part in). The pair is kept by a partial fence
+    at those waits only (the parked qubits and the wait's own qubits); no other barrier is added. Nothing to park: qc
+    itself. Checked here: the exact distribution of the classical bits unchanged (else ValueError)."""
+    f = fence_waits(qc, conditionals=True)
+    wins = _windows(f)
+    if not wins:
+        return qc, dict(parked=[], waits=0)
+    _, sim = _simulate(f, [w["start"] for w in wins])
+    act, pos = sim["act"], sim["pos"]
+    n = len(act)
+    plan = []
+    for w in wins:
+        flip = []
+        for q in act:
+            if q in w["involved"]:
+                continue
+            p1 = sum(p * float(_reduced(sv.data, pos[q], n)[1, 1].real) for p, sv, _ in sim["at"][w["start"]])
+            if p1 > threshold + 1e-9:
+                flip.append((q, p1))
+        plan.append(dict(w, flip=flip))
+    parked = [w for w in plan if w["flip"]]
+    if not parked:
+        return qc, dict(parked=[], waits=len(wins))
+    ins = _fence_inserted(qc, f)
+    starts = {w["start"]: w for w in parked}
+    ends = {w["end"]: w for w in parked}
+    allq = list(f.qubits)
+    out = f.copy_empty_like()
+    for i, x in enumerate(f.data):
+        w = starts.get(i)
+        if w is not None:
+            qs = [q for q, _ in w["flip"]]
+            for q in qs:
+                out.x(allq[q])
+            out.barrier([allq[q] for q in sorted(set(qs) | set(w["involved"]))])
+        if i not in ins:
+            out.append(x.operation, x.qubits, x.clbits)
+        w = ends.get(i)
+        if w is not None:
+            qs = [q for q, _ in w["flip"]]
+            out.barrier([allq[q] for q in sorted(set(qs) | set(w["involved"]))])
+            for q in qs:
+                out.x(allq[q])
+    d0, d1 = exact_distribution(qc), exact_distribution(out)
+    if any(abs(d0.get(k, 0.0) - d1.get(k, 0.0)) > 1e-9 for k in set(d0) | set(d1)):
+        raise ValueError("parking the likely value changed the noiseless distribution (not built)")
+    info = dict(parked=[dict(kind=w["kind"], qubits=[q for q, _ in w["flip"]],
+                             p1=[round(p, 6) for _, p in w["flip"]]) for w in parked],
+                waits=len(wins), parked_waits=len(parked), threshold=threshold, fence="partial")
+    return out, info
+
+
 def main(argv=None):
     import sys
     from qiskit import qpy

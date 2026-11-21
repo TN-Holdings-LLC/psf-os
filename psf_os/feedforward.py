@@ -784,7 +784,7 @@ def park_of_record(rec):
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
           strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record",
-          ff_only=(), park=None, declared=None, park_skip=()):
+          ff_only=(), park=None, declared=None, park_skip=(), park_likely=False):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -833,6 +833,11 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     declared (release-0.3.0; else the environment variable PSF_OS_DECLARED): the psf-os version a declaration fixed;
     with park=None the build is refused when that version's park default differs from this one's (resolve_park). The
     manifest names the version, the park setting and the declared version (psf_os_build).
+    park_likely (likely-park-2026-11-22, a 0.3.1 candidate; default False: as 0.3.0, byte for byte): True, or the
+    tags of the items to treat, parks the likely value after `park` (footprint.park_likely: an X pair around each
+    wait on every waiting qubit with P(|1>) > 0.5, kept by a partial fence on the parked qubits and the wait's own
+    qubits, at those waits only). Checked as `park` is: the noiseless distribution (park_likely) and the compiled CZ
+    of each arm against the unparked arms; the records carry "park_likely", the manifest's psf_os_build the setting.
     park_skip (release-0.3.0; default (): every item as `park` says): with park on, the items named here are built
     unparked (their records say "park": {"park": false, "skipped": "park_skip"}), so that a test can hold the parked
     and the unparked form of the same circuit side by side in one job.
@@ -876,6 +881,11 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             park_rec = {"park": False, "skipped": "park_skip"}
         elif park:
             park_rec, unparked, qc, off = _park_item(tag, qc, off)
+        likely_rec = None
+        if park_likely is True or (park_likely and tag in set(park_likely)):
+            likely_rec, before_likely, qc, off = _park_likely_item(tag, qc, off)
+            if before_likely is not None and unparked is None:
+                unparked = before_likely
         try:
             pl = given_chain(dev, chains[tag], a["n"]) if tag in chains else place(dev, a["n"])
         except Refused as e:
@@ -893,7 +903,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                 if cz_count(c0) != cz_count(arms[arm]):
                     raise Refused(f"{tag}: parking changed the compiled CZ count of the {arm} arm "
                                   f"({cz_count(c0)} -> {cz_count(arms[arm])}): not built")
-            park_rec = _park_physical(park_rec, chain)
+            if park_rec is not None and "arms" in park_rec:
+                park_rec = _park_physical(park_rec, chain)
         chk = {arm: checks(dev, c, chain) for arm, c in arms.items()}
         if not all(all(v.values()) for v in chk.values()):
             raise Refused(f"{tag}: acceptance failed: {chk}")
@@ -903,6 +914,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             check_rows[tag] = _check_row(tag, qc, off, arms)
             if park_rec is not None:
                 check_rows[tag]["park"] = park_rec
+            if likely_rec is not None:
+                check_rows[tag]["park_likely"] = likely_rec
         if strict_cz:
             written = {"ff": cz_count(qc), "off": cz_count(off), "floor": cz_count(qc)}
             got = {arm: cz_count(c) for arm, c in arms.items()}
@@ -922,11 +935,13 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                     g = wait_footprint(arms[arm], span=True, conditionals=True)
                     sent[arm] = dict(max=g["max"], total=g["total"], carriers=[w["carriers"] for w in g["waits"]])
                 fp = dict(sent=sent, written=fp, max=sent["ff"]["max"], total=sent["ff"]["total"])
-        prepared.append((tag, a, succ, spec, pl, arms, chk, written if strict_cz else None, fp, park_rec))
+        if likely_rec is not None:
+            likely_rec = _park_physical(likely_rec, chain)
+        prepared.append((tag, a, succ, spec, pl, arms, chk, written if strict_cz else None, fp, park_rec, likely_rec))
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
     rep_items = {}
-    for tag, a, succ, spec, pl, arms, chk, written, fp, park_rec in prepared:
+    for tag, a, succ, spec, pl, arms, chk, written, fp, park_rec, likely_rec in prepared:
         bound = spec.get("bound")
         chain = pl["chain"]
         labels = list(range(a["n"]))
@@ -953,7 +968,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                                  **({"fence": True} if fence else {}),
                                  **({"ff_only": True} if tag in ff_only else {}),
                                  **({"wait_footprint": fp} if fp is not None else {}),
-                                 **({"park": park_rec} if park_rec is not None else {})), valid=True, **common)
+                                 **({"park": park_rec} if park_rec is not None else {}),
+                                 **({"park_likely": likely_rec} if likely_rec is not None else {})), valid=True,
+                      **common)
         c = arms["ff"]
         rep_items[tag] = dict(n=a["n"], chain=chain, cz=cz_count(c), off_cz=cz_count(arms["off"]),
                               floor_cz=cz_count(arms["floor"]), depth=c.depth(),
@@ -967,7 +984,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                       cover=sorted({q for p in prepared for q in p[4]["chain"]}) if sentinel_over_test else None)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
                      **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}),
-                     build=_build_rec(park, park_how, declared))
+                     build=dict(_build_rec(park, park_how, declared),
+                                **({"park_likely": park_likely if park_likely is True else sorted(park_likely)}
+                                   if park_likely else {})))
     if record_checks == "record":
         _write_checks(out, check_rows)
     rep = dict(device=dev.name, kind=KIND, items=rep_items, circuits=len(man["pubs"]),
@@ -1020,6 +1039,24 @@ def _park_prep(tags, prep, park):
         recs.append(rec)
         out.append((a, qc2, off2, succ, spec))
     return out, recs, (prep if changed else None)
+
+
+def _park_likely_item(tag, qc, off):
+    """(record, the arms before or None, qc, off) for build(park_likely=...): footprint.park_likely on both arms."""
+    from psf_os.footprint import park_likely
+    rec, new = {"park_likely": True, "arms": {}}, {}
+    for arm, c in (("ff", qc), ("off", off)):
+        try:
+            c2, info = park_likely(c)
+        except ValueError as e:
+            if "changed the noiseless distribution" in str(e):
+                raise Refused(f"{tag}: {e}") from None
+            c2, info = c, dict(parked=[], skipped=str(e))
+        new[arm] = c2
+        rec["arms"][arm] = info
+    if new["ff"] is qc and new["off"] is off:
+        return rec, None, qc, off
+    return rec, (qc, off), new["ff"], new["off"]
 
 
 def _park_physical(rec, chain):
