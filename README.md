@@ -10,7 +10,8 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** Release 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop; changes in
+**Status.** 0.3.0 candidate (2026-11-21: waiting qubits parked in |0> by default, the paired loop, replay of a
+recorded night; not yet released). Last release 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop; changes in
 [`CHANGELOG.md`](CHANGELOG.md)). Archived on Zenodo: every release
 [10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (resolves to the latest), 0.1.1
 [10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
@@ -125,6 +126,36 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 
 The experiment a loop runs is given from outside (circuits, scores, the first rule); the lab notebook's `gpu/os_loop.py`
 is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Waiting qubits are parked in |0> (0.3.0)
+
+From 0.3.0, a build parks every qubit that waits in |1> in every branch during a mid-circuit read or a run of
+conditionals.
+
+- **How:** X before the wait's fence, X after it. Qubits in |0>, carriers and branch-dependent qubits are left as
+  they are.
+- **Checks at build:** the noiseless distribution and the compiled CZ count are the same as unparked; otherwise
+  the build is refused.
+- **Evidence:** the weekend's test C (results/weekend-shared-night-2026-11-21; IPE n = 4, one night, one device):
+  waiting in |0> kept +0.0387 (2 SE 0.0045) more than the superposition, while waiting in |1> kept no more.
+
+```python
+from psf_os import feedforward as FF
+FF.build(dev, items, out)                      # parks (the default)
+FF.build(dev, items, out, park=False)          # as before 0.3.0, byte for byte (e.g. a test of the unparked form)
+with FF.park_default(False):                   # every build in the block unparked unless it says park=True
+    ...
+FF.build(dev, items, out, declared="a164fc5")  # refused: the declared psf-os did not park; say park=False or True
+```
+
+- **Rebuilding a record:** a recorded build without the "park" key is rebuilt unparked. `loop.verify` and a
+  resumed night follow run.json's "park".
+- **A comparison with the unparked form:** the tool says `park=False`.
+- **A declared tool:** it names its psf-os with `declared=` or `PSF_OS_DECLARED`. When that version's default
+  differs, a build that does not say `park` is refused.
+- **Records:** every manifest records the version and the setting (`psf_os_build`). The records say where and what
+  was parked.
+- The same holds for `build_bundle` and `build_pack_fixed`.
 
 ## Added 2026-11-07 to 2026-11-13 (in 0.1.0)
 

@@ -471,7 +471,12 @@ def budget_text(spent, est, budget, k):
 # ------------------------------------------------------------------------------------------------ replay
 
 class NotInRecord(Exception):
-    """A circuit of a replayed night that the record does not hold."""
+    """A circuit of a replayed night that the record does not hold in one recorded job (release-0.3.0: strict)."""
+
+    def __init__(self, msg, missing=(), primary=None):
+        super().__init__(msg)
+        self.missing = list(missing)
+        self.primary = primary
 
 
 def _record_jobs(record):
@@ -501,9 +506,11 @@ def _cells_of(job_dir):
 def replay_job(record, folder):
     """Answer the job in `folder` from the recorded night `record`: job/raw_counts.json (rows in this job's pub order),
     job/submission.json (local, replay) and replay.json. The recorded job holding the most of this job's test cells is
-    the primary source; a cell it lacks comes from the first other recorded job holding it (name and gates equal).
-    The sentinel is taken by its name from the primary source. Raises NotInRecord, writing nothing, when a test
-    circuit is in no recorded job."""
+    the source (at a tie, the recorded job of the same folder name, then the first in name order).
+    release-0.3.0 (the owner's decision of 2026-11-21, strict): every cell, the sentinel by its name, must come from
+    that one recorded job (name and gates equal); cells are never gathered from two recorded jobs, since a paired
+    decision read across two jobs is not the decision the loop makes inside one job. Otherwise NotInRecord ("記録にない",
+    writing nothing), with the missing cells and the closest recorded job."""
     job = os.path.join(folder, "job")
     new = _cells_of(job)
     srcs = []
@@ -523,19 +530,23 @@ def replay_job(record, folder):
     # circuits in two rounds answers each round from its own job), then the first in name order
     tag = os.path.basename(os.path.abspath(folder))
     primary = max(srcs, key=lambda s: (sum(1 for k in test if k in s[1]), s[0] == tag))
-    order = [primary] + [s for s in srcs if s is not primary]
     missing, rows, source = [], [], []
     for k, (n, role, pt, _) in zip(keys, new):
-        got = next(((nm, idx[k]) for nm, idx in order if k in idx), None)
-        if got is None:
+        if k not in primary[1]:
             missing.append(f"{n}" + (f"[{pt}]" if pt else ""))
             continue
-        rows.append(dict(pub=len(rows), counts=got[1]))
-        source.append(dict(cell=n, point=pt, role=role, from_job=got[0]))
+        rows.append(dict(pub=len(rows), counts=primary[1][k]))
+        source.append(dict(cell=n, point=pt, role=role, from_job=primary[0]))
     if missing:
-        raise NotInRecord(f"記録にない: {len(missing)} of {len(new)} circuits of {os.path.basename(folder)} are in no "
-                          f"recorded job of {os.path.basename(os.path.abspath(record))} (name and gates): "
-                          + ", ".join(missing[:12]) + (" ..." if len(missing) > 12 else ""))
+        elsewhere = [m for m, k in zip(missing, [k for k in keys if k not in primary[1]])
+                     if any(k in idx for nm, idx in srcs if nm != primary[0])]
+        raise NotInRecord(f"記録にない: {len(missing)} of {len(new)} circuits of {os.path.basename(folder)} are not in "
+                          f"one recorded job of {os.path.basename(os.path.abspath(record))} (name and gates; the "
+                          f"closest, {primary[0]}, lacks them): " + ", ".join(missing[:12])
+                          + (" ..." if len(missing) > 12 else "")
+                          + (f" ({len(elsewhere)} of them are in another recorded job; cells are not gathered from "
+                             "two jobs)" if elsewhere else ""),
+                          missing=missing, primary=primary[0])
     man = json.load(open(os.path.join(job, "manifest.json")))
     from_jobs = sorted({s["from_job"] for s in source if s["role"] != "sentinel"})
     json.dump(dict(backend=man["fetch"]["backend"], job_id=f"replay:{primary[0]}", local=True,
@@ -599,6 +610,7 @@ class Night:
                 r = replay_job(self.cfg()["replay_from"], folder)
             except NotInRecord as exc:
                 self.replay_stop = str(exc)
+                self.replay_missing = dict(job=tag, closest_recorded_job=exc.primary, missing=exc.missing)
                 return False
             self.log(f"{tag}: replayed from the record (primary {r['primary']}; test cells from "
                      f"{', '.join(r['test_cells_from'])})")
@@ -703,7 +715,8 @@ class Night:
                 return json.load(open(os.path.join(self.out, "stop.json")))
             if not self.submit(folder):
                 if getattr(self, "replay_stop", None):
-                    return self.stop(f"{name}: {self.replay_stop}", replay_missing=True)
+                    return self.stop(f"{name}: {self.replay_stop}", replay_missing=True,
+                                     not_in_record=getattr(self, "replay_missing", None))
                 return self.stop(f"{name}: submission refused or failed (see run_log.txt)")
         st = self.collect(folder)
         if st == "WAIT":
@@ -1026,7 +1039,7 @@ def same_job(rec_job, new_job):
         how = "test circuits' gates (the bytes differ: other versions)" + (
             "" if sa == sb else "; the ring sentinel differs (beside, not judged)")
     ma, mb = (json.load(open(os.path.join(x, "manifest.json"))) for x in (rec_job, new_job))
-    drop = VERSION_KEYS if how != "bytes" else ("written", "env")
+    drop = (tuple(VERSION_KEYS) + ("psf_os_build",)) if how != "bytes" else ("written", "env", "psf_os_build")
     for m in (ma, mb):
         for k in drop:
             m.pop(k, None)

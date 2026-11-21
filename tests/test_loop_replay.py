@@ -225,3 +225,35 @@ def test_replay_prefers_the_job_of_the_same_name_at_a_tie(tmp_path):
         r = LP.replay_job(str(rec), f)
         assert r["primary"] == tag
         assert json.load(open(os.path.join(f, "job", "raw_counts.json")))["rows"][0]["counts"]["n"] == n
+
+
+def test_replay_is_strict_cells_are_never_gathered_from_two_jobs(tmp_path):
+    # release-0.3.0 (the owner's decision of 2026-11-21): key 1's stack is only in r2, key 2's only in r1; each cell
+    # is in the record, but not in one recorded job: 記録にない, nothing written, the missing cell and the closest job named
+    exp = QpyFake()
+    rec = tmp_path / "rec"
+    for tag, stacks in (("r1", {"1": ["P1"], "2": ["P0"]}), ("r2", {"1": ["P1", "M"], "2": ["P2"]})):
+        exp._job(str(rec / tag), dict(stacks=stacks), False)
+        json.dump(dict(rows=[dict(pub=i, counts={"n": 10 + i}) for i in range(3)]),
+                  open(rec / tag / "job" / "raw_counts.json", "w"))
+    f = str(tmp_path / "new" / "r1")
+    exp._job(f, dict(stacks={"1": ["P1", "M"], "2": ["P0"]}), False)
+    with pytest.raises(LP.NotInRecord) as e:
+        LP.replay_job(str(rec), f)
+    assert "記録にない" in str(e.value) and "not gathered from two jobs" in str(e.value)
+    assert e.value.primary == "r1" and e.value.missing == ["ff_k1"]
+    assert not os.path.exists(os.path.join(f, "job", "raw_counts.json"))
+    assert not os.path.exists(os.path.join(f, "replay.json"))
+
+
+def test_a_strict_stop_names_the_missing_cells_in_stop_json(tmp_path, devdir, record):
+    rec, _ = record
+    line = dict(night="hand", device=Dv.Device.load(devdir).name, calibration_time="cal-1",
+                last_stacks={"1": ["P2", "M", "F"], "2": ["P2"]})
+    led = str(tmp_path / "led.json")
+    json.dump([line], open(led, "w"))
+    out = str(tmp_path / "rs")
+    res = LP.start(out, QpyFake(), dry_devdir=devdir, ledger=led, replay_from=rec).go()
+    st = json.load(open(os.path.join(out, "stop.json")))
+    assert st["not_in_record"]["job"] == "r1" and st["not_in_record"]["missing"] == ["ff_k1"]
+    assert st["not_in_record"]["closest_recorded_job"] and res["replay_missing"]

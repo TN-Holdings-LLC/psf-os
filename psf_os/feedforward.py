@@ -56,6 +56,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 
 KIND = "feedforward"
 ONE_QUBIT = ("h", "x", "y", "z", "s", "sdg", "t", "tdg", "sx", "sxdg", "rx", "ry", "rz", "p", "id")
@@ -749,6 +750,31 @@ class park_default:
         return False
 
 
+PARK_SINCE = (0, 3, 0)
+
+
+def parks_by_default(version):
+    """Whether the psf-os named by `version` parks by default: a version "X.Y.Z" (or "vX.Y.Z") at 0.3.0 or later.
+    Anything else (an older version, a commit such as a164fc5) names a psf-os that did not park."""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(version or "").strip())
+    return bool(m) and tuple(int(x) for x in m.groups()) >= PARK_SINCE
+
+
+def resolve_park(park, declared=None):
+    """build()'s park setting (release-0.3.0, the safety guard): an explicit park wins; otherwise PARK_DEFAULT, refused
+    when a declared psf-os (`declared`, else the environment variable PSF_OS_DECLARED) has the other default (e.g. a
+    tool declared on a164fc5, which built IPE unparked, built with 0.3.0, which parks): the build must then say
+    park=True or park=False."""
+    if park is not None:
+        return bool(park), "explicit"
+    d = declared or os.environ.get("PSF_OS_DECLARED")
+    if d and parks_by_default(d) != PARK_DEFAULT:
+        raise Refused(f"the declared psf-os {d} {'parks' if parks_by_default(d) else 'does not park'} by default and "
+                      f"this psf-os {'parks' if PARK_DEFAULT else 'does not'}: pass park=False (the form the declared "
+                      "version built) or park=True explicitly")
+    return PARK_DEFAULT, "default"
+
+
 def park_of_record(rec):
     """The park setting a recorded build was made with: its "park" key, False when absent (every build before
     park-default-2026-11-21)."""
@@ -758,7 +784,7 @@ def park_of_record(rec):
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
           strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record",
-          ff_only=(), park=None):
+          ff_only=(), park=None, declared=None):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -804,6 +830,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     An item with nothing to park is built exactly as with park=False. With park True every record carries "park"
     (where and what was parked, excited before and after); with park=False nothing is added, byte for byte as
     before. A recorded build is remade with park_of_record(record) (no key: False).
+    declared (release-0.3.0; else the environment variable PSF_OS_DECLARED): the psf-os version a declaration fixed;
+    with park=None the build is refused when that version's park default differs from this one's (resolve_park). The
+    manifest names the version, the park setting and the declared version (psf_os_build).
     footprint (changed the same day, after the workplace VS's finding): the records carry the footprint of each arm
     as sent (compiled, span=True: the whole wait) as `sent` and its max / total first, and the item as written beside
     (`written`)."""
@@ -812,7 +841,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     if pack_fixed:
         if chains:
             raise Refused("pack_fixed places the items itself (bundle_place); chains cannot be given with it")
-        return build_pack_fixed(dev, items, out, shots=shots, max_seconds=max_seconds, sentinel_spec=sentinel_spec)
+        return build_pack_fixed(dev, items, out, shots=shots, max_seconds=max_seconds, sentinel_spec=sentinel_spec,
+                                park=park, declared=declared)
     if os.path.exists(out):
         raise Refused(f"{out} exists (nothing is overwritten)")
     tags = [t for t, _, _ in items]
@@ -826,7 +856,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         raise Refused(f"chains given for unknown items {sorted(set(chains) - set(tags))}")
     if record_checks not in ("record", "off"):
         raise Refused(f"record_checks must be 'record' or 'off' (got {record_checks!r})")
-    park = PARK_DEFAULT if park is None else bool(park)
+    park, park_how = resolve_park(park, declared)
     comp = Compiler(dev)
     prepared = []
     check_rows = {}
@@ -928,7 +958,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     cover = _sentinel(dev, runs, shots, sentinel_spec,
                       cover=sorted({q for p in prepared for q in p[4]["chain"]}) if sentinel_over_test else None)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
-                     **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}))
+                     **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}),
+                     build=_build_rec(park, park_how, declared))
     if record_checks == "record":
         _write_checks(out, check_rows)
     rep = dict(device=dev.name, kind=KIND, items=rep_items, circuits=len(man["pubs"]),
@@ -960,6 +991,27 @@ def _park_item(tag, qc, off):
     if new["ff"] is qc and new["off"] is off:
         return rec, None, qc, off
     return rec, (qc, off), new["ff"], new["off"]
+
+
+def _build_rec(park, how, declared):
+    return dict(park=bool(park), park_set=how,
+                **({"declared": declared or os.environ.get("PSF_OS_DECLARED")}
+                   if (declared or os.environ.get("PSF_OS_DECLARED")) else {}))
+
+
+def _park_prep(tags, prep, park):
+    """(prep, [record per item or None], unparked prep or None) for the builders of several items (build_bundle,
+    build_pack_fixed): each item's ff and off arms parked as build parks a single item (_park_item)."""
+    if not park:
+        return prep, [None] * len(prep), None
+    out, recs, changed = [], [], False
+    for t, p in zip(tags, prep):
+        a, qc, off, succ, spec = p
+        rec, unparked, qc2, off2 = _park_item(t, qc, off)
+        changed |= unparked is not None
+        recs.append(rec)
+        out.append((a, qc2, off2, succ, spec))
+    return out, recs, (prep if changed else None)
 
 
 def _park_physical(rec, chain):
@@ -1154,7 +1206,7 @@ CONDITIONAL_NEIGHBOURS_WHY = (
 
 def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None,
                  allow_conditional_neighbours=False, gap=BUNDLE_GAP, bit_order=None, behind_fixed_first=False,
-                 sentinel_over_test=False, record_checks="record"):
+                 sentinel_over_test=False, record_checks="record", park=None, declared=None):
     """items: [(sub_tag, QuantumCircuit, spec)] as for build. One job of one bundle: the sub-items placed by
     bundle_place, every sub-item on its segment and its bits at an offset of one classical register; ff = the
     sub-items' circuits, off = their off arms (explicit or the conditionals removed), floor = floor_of(ff), one ring
@@ -1177,6 +1229,10 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     The manifest records conditional_neighbours.allowed_by = "behind_fixed_first" and the shield's tag. Not to be used
     before a declared night has read row 1.
     sentinel_over_test (after-2026-11-20; default False): as build's, over the bundle's sub-items' qubits.
+    park, declared (release-0.3.0): as build's. Each sub-item's ff and off arms are parked as build parks a single
+    item (at its own waits; a wait of another sub-item is not looked at) before the sub-items are laid side by side;
+    the compiled CZ counts of the bundle's arms must equal the unparked bundle's (else refused); the bundle table
+    carries each sub-item's "park", the manifest the setting (psf_os_build). park=False: as before.
     record_checks (after-2026-11-20; default "record"): as build's, OUT/checks.json for the bundle's three arms."""
     if record_checks not in ("record", "off"):
         raise Refused(f"record_checks must be 'record' or 'off' (got {record_checks!r})")
@@ -1195,6 +1251,8 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     except Refused as e:
         raise Refused(f"{tag}: {e}") from None
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
+    park, park_how = resolve_park(park, declared)
+    prep, park_recs, unparked_prep = _park_prep(tags, prep, park)
     with_cond = [t for t, p in zip(tags, prep) if p[0]["conditionals"]]
     shield = None
     if len(with_cond) >= 2 and not allow_conditional_neighbours and behind_fixed_first:
@@ -1248,6 +1306,13 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     comp = Compiler(dev)
     arms = {w: comp.run(on_device(logical[w], chain, dev.num_qubits)) for w in ("ff", "off")}
     arms["floor"] = floor_of(arms["ff"])
+    if unparked_prep is not None:
+        for w, k in (("ff", 1), ("off", 2)):
+            c0 = comp.run(on_device(_bundle_logical(unparked_prep, k, segs, lo, hi, N, nbits, multi), chain,
+                                    dev.num_qubits))
+            if cz_count(c0) != cz_count(arms[w]):
+                raise Refused(f"{tag}: parking changed the compiled CZ count of the {w} arm "
+                              f"({cz_count(c0)} -> {cz_count(arms[w])}): not built")
     chk = {arm: checks(dev, c, chain) for arm, c in arms.items()}
     if not all(all(v.values()) for v in chk.values()):
         raise Refused(f"{tag}: acceptance failed: {chk}")
@@ -1269,7 +1334,8 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
             if wire_signature(mine) != wire_signature(ref):
                 raise Refused(f"{tag}: sub-item {t} ({w}) differs from the sub-item compiled alone on the same qubits")
         table[t] = dict(segment=segs[i], qubits=phys, bit_offset=lo[i], tag=t, chain=phys,
-                        **_item_extra(t, a, succ, spec), cz=cz_count(restrict(arms["ff"], phys, bits)))
+                        **_item_extra(t, a, succ, spec), cz=cz_count(restrict(arms["ff"], phys, bits)),
+                        **({"park": _park_physical(park_recs[i], phys)} if park_recs[i] is not None else {}))
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
     labels = list(range(N))
@@ -1285,9 +1351,13 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
                       cover=sorted(q for t in tags for q in table[t]["qubits"]) if sentinel_over_test else None)
     if cover is not None:
         man_extra["sentinel_cover"] = cover
-    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra)
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra,
+                     build=_build_rec(park, park_how, declared))
     if record_checks == "record":
-        _write_checks(out, {tag: _check_row(tag, logical["ff"], logical["off"], arms)})
+        row = _check_row(tag, logical["ff"], logical["off"], arms)
+        if park:
+            row["park"] = {t: table[t].get("park") for t in tags}
+        _write_checks(out, {tag: row})
     rep = dict(device=dev.name, kind=KIND, bundle=tag, chain=chain, segments=segs,
                items={t: dict(n=sizes[i], chain=table[t]["qubits"], bit_offset=lo[i], clbits=prep[i][0]["clbits"],
                               cz=table[t]["cz"]) for i, t in enumerate(tags)},
@@ -1297,6 +1367,20 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
         rep["sentinel_cover"] = cover
     json.dump(rep, open(os.path.join(out, "build.json"), "w"), indent=1, default=str)
     return rep
+
+
+def _bundle_logical(prep, k, segs, lo, hi, N, nbits, multi):
+    """build_bundle's composition of the sub-items' arms (k = 1 ff, k = 2 off): several registers kept and renamed,
+    or one register with each sub-item at its bit offset."""
+    from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
+    if multi:
+        regs = [ClassicalRegister(len(r), f"s{i}_{r.name}") for i, p in enumerate(prep) for r in p[1].cregs]
+        c1 = QuantumCircuit(QuantumRegister(N, "q"), *regs)
+    else:
+        c1 = QuantumCircuit(QuantumRegister(N, "q"), ClassicalRegister(nbits, "c"))
+    for i, p in enumerate(prep):
+        c1.compose(p[k], qubits=segs[i], clbits=list(range(lo[i], hi[i])), inplace=True)
+    return c1
 
 
 def _packed_logical(prep, k, segs, offs, N):
@@ -1393,7 +1477,7 @@ def exact_distribution(qc, tol=1e-15):
 FIXED_PACK_TAG = "fixedpack"
 
 
-def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None):
+def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, park=None, declared=None):
     """v0.2 prototype (2026-11-18): the production form of 2026-11-18's P-A. Every item's ff arm is its own circuit,
     placed on the segment bundle_place gives it; the fixed arms (no conditional) of all items are packed: one off
     circuit (the items' off arms side by side, one register with a bit offset per item) and one floor circuit
@@ -1403,7 +1487,10 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
     of the off arm (exact_distribution). Records: per item its ff record as build writes it (with fixed_pack naming the
     packed records), and the packed off and floor records with the table fixed_pack_table = {tag: dict(segment, qubits,
     bit_offset, clbits)}. cards() gives every item the card build would give it, its off and floor read from its own
-    bits of the packed circuits. Circuits: one per item + 2 + the sentinel's."""
+    bits of the packed circuits. Circuits: one per item + 2 + the sentinel's.
+    park, declared (release-0.3.0): as build's: every item's ff and off arms parked as build parks them; the compiled
+    CZ of each ff arm and of the packed off arm equal to the unparked ones (else refused); each ff record carries
+    "park", the manifest the setting (psf_os_build). park=False: as before."""
     from psf_os import job as J
     from psf_os import user2d as U
     if os.path.exists(out):
@@ -1412,6 +1499,8 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
     if len(items) < 2 or len(set(tags)) != len(tags) or not all(U._tag_ok(t) for t in tags) or FIXED_PACK_TAG in tags:
         raise Refused(f"pack_fixed needs two or more distinct items with plain tags (not '{FIXED_PACK_TAG}'): {tags}")
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
+    park, park_how = resolve_park(park, declared)
+    prep, park_recs, unparked_prep = _park_prep(tags, prep, park)
     sizes = [p[0]["n"] for p in prep]
     pl = bundle_place(dev, sizes)
     chain, segs = pl["chain"], pl["segments"]
@@ -1434,6 +1523,14 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
     # the packed fixed arms
     packed = dict(off=comp.run(on_device(_packed_logical(prep, 2, segs, offs, N), chain, dev.num_qubits)),
                   floor=floor_of(comp.run(on_device(_packed_logical(prep, 1, segs, offs, N), chain, dev.num_qubits))))
+    if unparked_prep is not None:
+        for i, (t, p) in enumerate(zip(tags, unparked_prep)):
+            c0 = comp.run(on_device(p[1], phys[i], dev.num_qubits))
+            if cz_count(c0) != cz_count(ff[t]):
+                raise Refused(f"{t}: parking changed the compiled CZ count of the ff arm: not built")
+        c0 = comp.run(on_device(_packed_logical(unparked_prep, 2, segs, offs, N), chain, dev.num_qubits))
+        if cz_count(c0) != cz_count(packed["off"]):
+            raise Refused("pack_fixed: parking changed the compiled CZ count of the packed off arm: not built")
     chk_p = {arm: checks(dev, c, chain) for arm, c in packed.items()}
     if not all(all(v.values()) for v in chk_p.values()):
         raise Refused(f"pack_fixed: acceptance of the packed arms failed: {chk_p}")
@@ -1468,7 +1565,9 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
                                                            bundle_gap=BUNDLE_GAP),
                      **_item_extra(t, a, succ, spec), fixed_pack=FIXED_PACK_TAG)
         U._record(dev, runs, f"ff_{t}", "user", KIND, [ff[t]], [dict(input="f", setting="z")],
-                  extra=dict(extra, ff_arm="ff", cz=cz_count(ff[t]), checks=chk_ff[t]), valid=True, labels=labels,
+                  extra=dict(extra, ff_arm="ff", cz=cz_count(ff[t]), checks=chk_ff[t],
+                             **({"park": _park_physical(park_recs[i], phys[i])} if park_recs[i] is not None
+                                else {})), valid=True, labels=labels,
                   mapping={k: phys[i][k] for k in labels}, shots=shots)
         rep_items[t] = dict(n=a["n"], chain=phys[i], cz=cz_count(ff[t]), mid=a["mid"], conditionals=a["conditionals"],
                             bit_offset=offs[i], **({"rus": extra["rus"]} if "rus" in extra else {}))
@@ -1484,7 +1583,8 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
     _sentinel(dev, runs, shots, sentinel_spec)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
                      extra=dict(pack_fixed=dict(items=tags, packed=["off", "floor"]),
-                                conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)}))
+                                conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)}),
+                     build=_build_rec(park, park_how, declared))
     rep = dict(device=dev.name, kind=KIND, pack_fixed=True, chain=chain, segments=segs, items=rep_items,
                circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
                cz=dict(off=cz_count(packed["off"]), floor=cz_count(packed["floor"])))

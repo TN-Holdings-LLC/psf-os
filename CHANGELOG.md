@@ -1,6 +1,77 @@
 # Changelog
 
-## Unreleased (branch park-default-2026-11-21, from loop-paired-2026-11-21 a164fc5)
+## 0.3.0 (candidate, 2026-11-21; not released, not tagged)
+
+What changed since 0.2.0, with the device record each change rests on. Every recorded build remakes as it was
+built: a recorded build has no "park" key and is remade unparked; the version and park setting in the manifest
+(`psf_os_build`) are left out when a rebuilt job is compared (`loop.same_job`). In the notebook, reproduce.py gives
+every entry SAME with this version, and `verify` gives SAME for the loops of 2026-11-19 and 2026-11-20.
+
+### Changed defaults
+
+- **A waiting qubit in |1> is parked in |0>** (`build`, `build_bundle`, `build_pack_fixed`: `park=None` means
+  `PARK_DEFAULT`, which is True).
+  - Where: at every mid-circuit read and every run of conditionals. The waits are fenced as
+    `fence_waits(conditionals=True)`.
+  - What: each qubit that waits in |1> in every branch is put in |0> for the wait: X before the fence, X after.
+    Qubits in |0>, carriers and branch-dependent qubits are left alone.
+  - Checks at build: the noiseless distribution is unchanged, and the compiled CZ count equals the unparked one;
+    otherwise refused.
+  - The off arm is parked as the ff arm is.
+  - The records, checks.json and the build report say where and what was parked, with excited before and after.
+  - **Evidence:** results/weekend-shared-night-2026-11-21, test C. On IPE n = 4, waiting in |0> (pk) against the
+    superposition as sent before (pl) gave +0.0387 (2 SE 0.0045), KEEPS MORE. Waiting in |1> (fe) against pl gave
+    -0.0042 (2 SE 0.0049), SAME WITHIN ERROR. **That is IPE n = 4, one night, one device.** The switch stays.
+  - Among the notebook's tools only IPE changes: every wait parks its target, and compiled depth grows by up to +16 at
+    n = 6. The RUS chains, the textbook circuit, the repetition code and decoy's rd2 have nothing to park
+    (notes/park_default_2026-11-21).
+- **A test that compares with the unparked form says `park=False`** (the owner's rule of 2026-11-21).
+- **The safety guard.** A tool declared on another psf-os names it: `declared=` or the environment variable
+  `PSF_OS_DECLARED`. If that version's park default differs from this one's, a build that does not say `park` is
+  refused before anything is written. Any commit, or a version before 0.3.0, counts as not parking. For example, a
+  tool declared on a164fc5 and built with 0.3.0 must say park=False to build the IPE it declared.
+- **Every manifest names its build** (`psf_os_build`: version, park, how park was set, declared).
+- **run_local's seeds** are kept apart per circuit and part (after-2026-11-20; `stride=1` gives the 0.2.0 seeds).
+
+### Added, off by default
+
+- **Record-only checks** (`checks.json`, on by default, outside the job): CZ as written and as compiled, and the
+  footprint as sent and as written. `strict_cz=True` refuses a difference; it is used only when chosen.
+  - **Evidence:** the repetition code of 2026-11-19 (results/repcode-night-2026-11-19) ran with 16 CZ on the
+    error-on-d0 items but 14 on the other three. The compiler cancelled a CX pair (notes/repcode_2026-11-19_cz.md).
+    No verdict changed; the pooled share mixes 14 and 16 CZ.
+- **The wait footprint** (`psf_os.footprint`): carriers and excited qubits at each wait, exact over the branches.
+  - **Evidence:** test A of the weekend. On the repetition code, fewer carriers at equal CZ (F6P - F10) gave
+    +0.0153 (2 SE 0.0081), KEEPS MORE. Fewer CZ at equal carriers (F6 - F6P) gave +0.0224 (2 SE 0.0077), KEEPS MORE.
+    The forms also differ in depth (a declared limit).
+- **Fences** (`build(fence=True)`, `fence_waits`): the compiler cannot merge gates across a wait (on IPE it had held
+  the target in a superposition).
+- **The paired loop** (`loop.next_stacks_paired`, `start(..., paired=True)`; used only when chosen): the incumbent and
+  the candidate in one job, decided by their difference there.
+  - **Evidence for the need:** results/loopvar-night-2026-11-20. Copies inside one job agree; jobs minutes apart
+    moved at L 2 (p 0.006, excess SD 0.014).
+  - **Run once:** results/loop-paired-night-2026-11-20, 110 s, two rounds, every decision inside one job, verify SAME.
+- **`build(ff_only=[...])`**: those items' ff arm only. The paired loop uses it, and so did the weekend's shared night
+  (111 s for three tests).
+- **Replay** (`start(..., replay_from=RECORD)`, dry runs only): a night answered from a recorded night's raw counts.
+  - It is strict: every cell must come from one recorded job (the owner's decision of 2026-11-21). Otherwise it stops
+    with "記録にない" and names the missing cells and the closest recorded job. A paired decision read across two jobs
+    is not the loop's decision.
+  - A replayed night takes the recorded night's park setting.
+  - A broken ledger (not JSON, a bad line) is not used, and the reason is written. Before, the night stopped with a
+    Python error.
+- The ring sentinel over the test (`sentinel_over_test=True`), `ring_chains`, and receivers for the decoy and loopvar
+  tests: as in the branch notes below.
+
+### Tests
+
+The full suite passes; the counts are in the release report. New in 0.3.0: `tests/test_park_default.py`,
+`tests/test_release_030.py`, `tests/test_loop_replay.py`, `tests/test_loop_paired.py`. `test_footprint`'s fence test
+pins park=False, since it is about the unparked IPE.
+
+### The branches merged into 0.3.0 (their notes, as written)
+
+### The branch park-default-2026-11-21 (from loop-paired-2026-11-21 a164fc5)
 
 A waiting qubit is parked in |0> by default (the owner's decision of 2026-11-21 9:59 JST). The weekend's test C
 (results/weekend-shared-night-2026-11-21, IPE n = 4) gave: waiting in |0> keeps +0.0387 (2 SE 0.0045) more; waiting
@@ -31,7 +102,7 @@ in |1> is the same as the superposition (-0.0042). That is one night on one devi
 - `build_bundle`, `build_pack_fixed` and the other builders are unchanged (no parking).
 - Tests: `tests/test_park_default.py` (10).
 
-## Unreleased (branch ledger-replay-2026-11-21, from loop-paired-2026-11-21 a164fc5; not declared)
+### The branch ledger-replay-2026-11-21 (from loop-paired-2026-11-21 a164fc5; not declared)
 
 The ledger's path checked without the device (the home instruction of 2026-11-21, the owner's decision of 2026-11-21
 0:3x JST). Off by default: a night without `replay_from` builds, runs, rules and verifies as before.
@@ -55,7 +126,7 @@ The ledger's path checked without the device (the home instruction of 2026-11-21
   A good ledger gives the same decision as before.
 - Tests: `tests/test_loop_replay.py` (7).
 
-## Unreleased (branch loop-paired-2026-11-21, from after-2026-11-20; a prototype, not declared)
+### The branch loop-paired-2026-11-21 (from after-2026-11-20; a prototype, not declared)
 
 The loop compares inside one job (the home instruction of 2026-11-21, the owner's decision of 2026-11-20). Everything
 is off by default: a night without `paired` rules, runs and verifies as before, and `build` without `ff_only` is byte
@@ -77,7 +148,7 @@ for byte as before.
   `ff_only`. In the paired loop this is the incumbent's ff beside the candidate's three arms.
 - Tests: `tests/test_loop_paired.py` (9).
 
-## Unreleased (branch after-2026-11-20; not released, not used by the declared tests of 2026-11-20)
+### The branch after-2026-11-20 (not released; not used by the declared tests of 2026-11-20)
 
 What the circuits look like as they are sent, recorded by default; what the compiler may do around a wait, chosen by
 argument. No default changes a job: `job/`, `runs/` and `build.json` are byte for byte as in 0.2.0 (but run_local's

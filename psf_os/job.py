@@ -161,7 +161,7 @@ def verify_env(manifest, quiet=False):
     return dict(same=not differ, recorded=rec, here=here, differ=differ, note=note)
 
 
-def assemble(dev, runs, out, max_seconds=60, extra=None):
+def assemble(dev, runs, out, max_seconds=60, extra=None, build=None):
     """One job folder from every valid record in `runs`: circuits.qpy (in record order, references after the echo
     points) and manifest.json (cells, pubs, shots, the device record). Refuses an over-long job by the time model.
     v0.2 prototype (2026-11-18): the manifest also records the build environment (env, build_env()) and any `extra`
@@ -216,6 +216,10 @@ def assemble(dev, runs, out, max_seconds=60, extra=None):
         from psf_os.feedforward import broadcast_record
         man["broadcast"] = broadcast_record(circuits)
     man["env"] = build_env()
+    # release-0.3.0: every manifest names the psf-os version that built it and, for the builders that park, the park
+    # setting and the declared psf-os (beside the job: loop.same_job leaves it out, as the build environment)
+    from psf_os import __version__
+    man["psf_os_build"] = dict(version=__version__, **(build or {}))
     for k, v in (extra or {}).items():
         if k in man:
             raise RuntimeError(f"assemble: extra field {k} would overwrite the manifest's own")
