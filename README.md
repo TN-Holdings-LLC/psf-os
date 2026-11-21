@@ -10,9 +10,9 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** 0.3.0 candidate (2026-11-21: waiting qubits parked in |0> by default, the paired loop, replay of a
-recorded night; not yet released). Last release 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop; changes in
-[`CHANGELOG.md`](CHANGELOG.md)). Archived on Zenodo: every release
+**Status.** 0.3.0 (2026-11-21): waiting qubits parked in |0> by default, the paired loop, replay of a recorded
+night (changes in [`CHANGELOG.md`](CHANGELOG.md)). Before it: 0.2.0 (2026-11-19; real-time control, the build rules
+and the compounding loop). Archived on Zenodo: every release
 [10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (resolves to the latest), 0.1.1
 [10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
 their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook) (named TOQB until

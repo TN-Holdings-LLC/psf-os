@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.3.0 (candidate, 2026-11-21; not released, not tagged)
+## 0.3.0 (2026-11-21)
+
+The code is as sent to the device on 2026-11-21 at 11:00 CET (cedd90d; results/qpe-parked-night-2026-11-21);
+the release commit changes CHANGELOG.md, README.md and .zenodo.json only.
 
 What changed since 0.2.0, with the device record each change rests on. Every recorded build remakes as it was
 built: a recorded build has no "park" key and is remade unparked; the version and park setting in the manifest
@@ -21,7 +24,11 @@ every entry SAME with this version, and `verify` gives SAME for the loops of 202
   - The records, checks.json and the build report say where and what was parked, with excited before and after.
   - **Evidence:** results/weekend-shared-night-2026-11-21, test C. On IPE n = 4, waiting in |0> (pk) against the
     superposition as sent before (pl) gave +0.0387 (2 SE 0.0045), KEEPS MORE. Waiting in |1> (fe) against pl gave
-    -0.0042 (2 SE 0.0049), SAME WITHIN ERROR. **That is IPE n = 4, one night, one device.** The switch stays.
+    -0.0042 (2 SE 0.0049), SAME WITHIN ERROR.
+  - **Run as the default:** results/qpe-parked-night-2026-11-21 (psf-os at cedd90d, another calibration). The parked
+    IPE against its unparked twin (`park_skip`) in the same job: +0.0349, +0.0312, +0.0386 at n = 4, 5, 6 (2 SE about
+    0.0075), KEEPS MORE at every n; the parked IPE beyond its ceiling at every n; the parked loss per added bit FLAT.
+    **Two nights, one device, one circuit family (IPE).** The switch stays.
   - Among the notebook's tools only IPE changes: every wait parks its target, and compiled depth grows by up to +16 at
     n = 6. The RUS chains, the textbook circuit, the repetition code and decoy's rd2 have nothing to park
     (notes/park_default_2026-11-21).
@@ -67,7 +74,9 @@ every entry SAME with this version, and `verify` gives SAME for the loops of 202
 
 ### Tests
 
-The full suite passes; the counts are in the release report. New in 0.3.0: `tests/test_park_default.py`,
+384 passed, 1 skipped (the heavy exact_tn case), with the notebook as TOQB_DIR; reproduce.py 88 of 88 SAME (89 with
+the parked night of 2026-11-21); `verify` SAME for the loops of 2026-11-19 and 2026-11-20. Run by the home VS and again
+at home. New in 0.3.0: `tests/test_park_default.py`,
 `tests/test_release_030.py`, `tests/test_loop_replay.py`, `tests/test_loop_paired.py`. `test_footprint`'s fence test
 pins park=False, since it is about the unparked IPE.
 
