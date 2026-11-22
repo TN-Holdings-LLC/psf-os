@@ -1,6 +1,7 @@
-"""likely-park-2026-11-22 (a 0.3.1 candidate, off by default): footprint.park_likely parks every waiting qubit with
-P(|1>) > 0.5 (entangled ones too) with an X pair kept by a partial fence at those waits only; build(park_likely=...)
-applies it after `park`, checked as `park` is; without it everything is 0.3.0's, byte for byte."""
+"""likely-park-2026-11-22, released in 0.3.1 as the default: footprint.park_likely parks every waiting qubit with
+P(|1>) > 0.5 (entangled ones too) with an X pair kept by a partial fence at those waits only; build(park_likely=None)
+applies it after `park` by default, checked as `park` is; park_likely=False builds as 0.3.0, byte for byte; the safety
+guard refuses an item it would change when the declared psf-os had the other default."""
 import json
 import math
 import os
@@ -64,7 +65,7 @@ def test_build_keeps_the_pair_and_the_cz(tmp_path):
     dev = Dv.fetch_fake("FakeFez")
     items = [("lk", _likely(), dict(success={4: 0}))]
     a, b = str(tmp_path / "off"), str(tmp_path / "on")
-    r0 = FF.build(dev, items, a, shots=500, sentinel_spec=SPEC, park=True)
+    r0 = FF.build(dev, items, a, shots=500, sentinel_spec=SPEC, park=True, park_likely=False)
     r1 = FF.build(dev, items, b, shots=500, sentinel_spec=SPEC, park=True, park_likely=True)
     assert r0["items"]["lk"]["cz"] == r1["items"]["lk"]["cz"]
     rec = json.load(open(os.path.join(b, "runs", "ff_lk.json")))
@@ -93,14 +94,57 @@ def test_park_likely_names_items(tmp_path):
     assert "park_likely" not in json.load(open(os.path.join(out, "runs", "ff_lb.json")))
 
 
-def test_off_by_default_byte_for_byte(tmp_path):
+def test_the_default_parks_and_false_is_0_3_0(tmp_path):
     dev = Dv.fetch_fake("FakeFez")
     items = [("lk", _likely(), dict(success={4: 0}))]
-    a, b = str(tmp_path / "a"), str(tmp_path / "b")
-    FF.build(dev, items, a, shots=500, sentinel_spec=SPEC, park=True)
-    FF.build(dev, items, b, shots=500, sentinel_spec=SPEC, park=True, park_likely=False)
-    for f in sorted(os.listdir(os.path.join(a, "runs"))):
-        assert open(os.path.join(a, "runs", f), "rb").read() == open(os.path.join(b, "runs", f), "rb").read()
+    a, b, c, d = (str(tmp_path / x) for x in "abcd")
+    FF.build(dev, items, a, shots=500, sentinel_spec=SPEC)                         # the 0.3.1 default
+    FF.build(dev, items, b, shots=500, sentinel_spec=SPEC, park_likely=True)
+    assert open(os.path.join(a, "runs", "ff_lk.qpy"), "rb").read() == open(os.path.join(b, "runs", "ff_lk.qpy"),
+                                                                           "rb").read()
+    assert json.load(open(os.path.join(a, "job", "manifest.json")))["psf_os_build"]["park_likely_set"] == "default"
+    FF.build(dev, items, c, shots=500, sentinel_spec=SPEC, park_likely=False)
+    with FF.park_default(True, likely=False):
+        FF.build(dev, items, d, shots=500, sentinel_spec=SPEC)
+    for f in sorted(os.listdir(os.path.join(c, "runs"))):
+        assert open(os.path.join(c, "runs", f), "rb").read() == open(os.path.join(d, "runs", f), "rb").read()
+    assert "park_likely" not in json.load(open(os.path.join(c, "runs", "ff_lk.json")))
+    assert FF.PARK_LIKELY_DEFAULT is True
+
+
+def test_park_default_false_builds_as_before_0_3_0(tmp_path):
+    with FF.park_default(False):
+        assert FF.PARK_DEFAULT is False and FF.PARK_LIKELY_DEFAULT is False
+    assert FF.PARK_DEFAULT is True and FF.PARK_LIKELY_DEFAULT is True
+    assert FF.park_likely_of_record({}) is False and FF.park_likely_of_record({"park_likely": {"park_likely": True}})
+
+
+def test_the_guard_for_the_likely_default(tmp_path, monkeypatch):
+    import pytest
+    dev = Dv.fetch_fake("FakeFez")
+    assert FF.parks_likely_by_default("0.3.1") and not FF.parks_likely_by_default("0.3.0")
+    assert not FF.parks_likely_by_default("a6170e5")
+    for declared in ("0.3.0", "a6170e5"):
+        with pytest.raises(FF.Refused, match="park the likely value by default"):
+            FF.build(dev, [("lk", _likely(), dict(success={4: 0}))], str(tmp_path / f"x{declared}"), shots=500,
+                     sentinel_spec=SPEC, park=True, declared=declared)
+    # an item parking the likely value leaves alone is built as either version builds it
+    qc = QuantumCircuit(QuantumRegister(2, "q"), ClassicalRegister(3, "c"))
+    qc.x(1)
+    for r in range(2):
+        qc.h(0)
+        qc.cz(0, 1)
+        qc.h(0)
+        qc.measure(0, r)
+        with qc.if_test((qc.clbits[r], 1)):
+            qc.x(0)
+    qc.measure(1, 2)
+    FF.build(dev, [("ip", qc, dict(success={2: 1}))], str(tmp_path / "ipe"), shots=500, sentinel_spec=SPEC,
+             declared="0.3.0")
+    FF.build(dev, [("lk", _likely(), dict(success={4: 0}))], str(tmp_path / "said"), shots=500, sentinel_spec=SPEC,
+             park=True, declared="0.3.0", park_likely=False)                      # said: built
+    monkeypatch.setenv("PSF_OS_DECLARED", "0.3.1")
+    FF.build(dev, [("lk", _likely(), dict(success={4: 0}))], str(tmp_path / "rel"), shots=500, sentinel_spec=SPEC)
 
 
 def test_the_always_one_case_is_left_to_park():

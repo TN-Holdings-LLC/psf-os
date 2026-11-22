@@ -547,7 +547,10 @@ def test_pack_fixed_on_tonights_pa_record_gives_the_same_ff_bytes(tmp_path):
     dev = Device.load(os.path.join(nb, "results", "parallel-night-2026-11-18", "fetch_in", "ibm_marrakesh", "dev"))
     items = _pack_items()
     out = str(tmp_path / "pf")
-    FF.build(dev, items, out, sentinel_spec=dict(kind="echo_clifford", D=24), pack_fixed=True)
+    # a recorded build (2026-11-18, before parking) is remade unparked: its records hold no park key (release-0.3.1:
+    # the likely value is parked by default, rd3 has such a qubit)
+    with FF.park_default(False):
+        FF.build(dev, items, out, sentinel_spec=dict(kind="echo_clifford", D=24), pack_fixed=True)
     for t, _, _ in items:
         a = open(os.path.join(pa, "runs", f"ff_{t}.qpy"), "rb").read()
         b = open(os.path.join(out, "runs", f"ff_{t}.qpy"), "rb").read()

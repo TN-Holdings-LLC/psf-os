@@ -731,22 +731,29 @@ def _write_checks(out, rows):
 # remakes a recorded night must not (its records hold no "park" key: read as False). PARK_DEFAULT is what build()
 # uses when park=None; park_default(value) sets it for a block (psf_os.loop.verify uses it).
 PARK_DEFAULT = True
+# release-0.3.1: parking the likely value (footprint.park_likely, behind a partial fence) is build()'s default too.
+# A recorded build without the "park_likely" key was made without it (read as False).
+PARK_LIKELY_DEFAULT = True
 
 
 class park_default:
-    """Context manager: build()'s park default inside the block (park=None resolves to `value`)."""
+    """Context manager: build()'s park default inside the block (park=None resolves to `value`) and its park_likely
+    default (park_likely=None resolves to `likely`; when `likely` is not given, the same as `value`: park_default(False)
+    builds as before 0.3.0)."""
 
-    def __init__(self, value):
+    def __init__(self, value, likely=None):
         self.value = bool(value)
+        self.likely = self.value if likely is None else bool(likely)
 
     def __enter__(self):
-        global PARK_DEFAULT
-        self.saved, PARK_DEFAULT = PARK_DEFAULT, self.value
+        global PARK_DEFAULT, PARK_LIKELY_DEFAULT
+        self.saved = (PARK_DEFAULT, PARK_LIKELY_DEFAULT)
+        PARK_DEFAULT, PARK_LIKELY_DEFAULT = self.value, self.likely
         return self
 
     def __exit__(self, *exc):
-        global PARK_DEFAULT
-        PARK_DEFAULT = self.saved
+        global PARK_DEFAULT, PARK_LIKELY_DEFAULT
+        PARK_DEFAULT, PARK_LIKELY_DEFAULT = self.saved
         return False
 
 
@@ -775,6 +782,35 @@ def resolve_park(park, declared=None):
     return PARK_DEFAULT, "default"
 
 
+PARK_LIKELY_SINCE = (0, 3, 1)
+
+
+def parks_likely_by_default(version):
+    """Whether the psf-os named by `version` parks the likely value by default: a version at 0.3.1 or later (the
+    released 0.3.1; its candidate a6170e5, also "0.3.1", had it off, and every build of it named park_likely
+    explicitly). Anything else, a commit or an older version, did not."""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(version or "").strip())
+    return bool(m) and tuple(int(x) for x in m.groups()) >= PARK_LIKELY_SINCE
+
+
+def resolve_park_likely(park_likely, declared=None):
+    """(setting, how, guarded): an explicit park_likely (True, False or tags) wins; otherwise PARK_LIKELY_DEFAULT.
+    guarded is True when a declared psf-os (`declared`, else PSF_OS_DECLARED) has the other default: build() then
+    refuses any item that parking the likely value would change (an item it leaves alone is built as either version
+    builds it)."""
+    if park_likely is not None:
+        return park_likely, "explicit", False
+    d = declared or os.environ.get("PSF_OS_DECLARED")
+    guarded = bool(d) and parks_likely_by_default(d) != PARK_LIKELY_DEFAULT
+    return PARK_LIKELY_DEFAULT, "default", guarded
+
+
+def park_likely_of_record(rec):
+    """The park_likely setting a recorded build was made with: its "park_likely" key, False when absent."""
+    v = (rec or {}).get("park_likely", False)
+    return bool(v) if not isinstance(v, dict) else bool(v.get("park_likely", True))
+
+
 def park_of_record(rec):
     """The park setting a recorded build was made with: its "park" key, False when absent (every build before
     park-default-2026-11-21); an item skipped by park_skip reads False."""
@@ -784,7 +820,7 @@ def park_of_record(rec):
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
           strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record",
-          ff_only=(), park=None, declared=None, park_skip=(), park_likely=False):
+          ff_only=(), park=None, declared=None, park_skip=(), park_likely=None):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -833,8 +869,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     declared (release-0.3.0; else the environment variable PSF_OS_DECLARED): the psf-os version a declaration fixed;
     with park=None the build is refused when that version's park default differs from this one's (resolve_park). The
     manifest names the version, the park setting and the declared version (psf_os_build).
-    park_likely (likely-park-2026-11-22, a 0.3.1 candidate; default False: as 0.3.0, byte for byte): True, or the
-    tags of the items to treat, parks the likely value after `park` (footprint.park_likely: an X pair around each
+    park_likely (likely-park-2026-11-22; release-0.3.1: None = PARK_LIKELY_DEFAULT, True; park_likely=False builds as
+    0.3.0, byte for byte; a recorded build without the key is remade with False): True, or the tags of the items to
+    treat, parks the likely value after `park` (footprint.park_likely: an X pair around each
     wait on every waiting qubit with P(|1>) > 0.5, kept by a partial fence on the parked qubits and the wait's own
     qubits, at those waits only). Checked as `park` is: the noiseless distribution (park_likely) and the compiled CZ
     of each arm against the unparked arms; the records carry "park_likely", the manifest's psf_os_build the setting.
@@ -850,7 +887,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         if chains:
             raise Refused("pack_fixed places the items itself (bundle_place); chains cannot be given with it")
         return build_pack_fixed(dev, items, out, shots=shots, max_seconds=max_seconds, sentinel_spec=sentinel_spec,
-                                park=park, declared=declared)
+                                park=park, declared=declared, park_likely=park_likely)
     if os.path.exists(out):
         raise Refused(f"{out} exists (nothing is overwritten)")
     tags = [t for t, _, _ in items]
@@ -865,6 +902,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     if record_checks not in ("record", "off"):
         raise Refused(f"record_checks must be 'record' or 'off' (got {record_checks!r})")
     park, park_how = resolve_park(park, declared)
+    park_likely, likely_how, likely_guard = resolve_park_likely(park_likely, declared)
+    if not park and likely_how == "default":
+        park_likely = False                    # release-0.3.1: by default, the likely value is parked only with park
     park_skip = set(park_skip or ())
     if park_skip - set(tags):
         raise Refused(f"park_skip names unknown items {sorted(park_skip - set(tags))}")
@@ -882,8 +922,14 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         elif park:
             park_rec, unparked, qc, off = _park_item(tag, qc, off)
         likely_rec = None
-        if park_likely is True or (park_likely and tag in set(park_likely)):
+        named = park_likely is True or (bool(park_likely) and park_likely is not True and tag in set(park_likely))
+        # release-0.3.1: never on a park_skip item (the unparked twin stays unparked); by default only where park is on
+        if named and tag not in park_skip and (park or likely_how == "explicit"):
             likely_rec, before_likely, qc, off = _park_likely_item(tag, qc, off)
+            if before_likely is not None and likely_guard:
+                raise Refused(f"{tag}: the declared psf-os {declared or os.environ.get('PSF_OS_DECLARED')} does not "
+                              "park the likely value by default and this psf-os does, and it would change this item: "
+                              "pass park_likely=False (the form the declared version built) or park_likely=True")
             if before_likely is not None and unparked is None:
                 unparked = before_likely
         try:
@@ -986,7 +1032,9 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                      **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}),
                      build=dict(_build_rec(park, park_how, declared),
                                 **({"park_likely": park_likely if park_likely is True else sorted(park_likely)}
-                                   if park_likely else {})))
+                                   if park_likely else {}),
+                                **({"park_likely_set": likely_how} if park_likely and likely_how == "default"
+                                   else {})))
     if record_checks == "record":
         _write_checks(out, check_rows)
     rep = dict(device=dev.name, kind=KIND, items=rep_items, circuits=len(man["pubs"]),
@@ -1026,18 +1074,30 @@ def _build_rec(park, how, declared):
                    if (declared or os.environ.get("PSF_OS_DECLARED")) else {}))
 
 
-def _park_prep(tags, prep, park):
+def _park_prep(tags, prep, park, likely=False, likely_guard=False, declared=None):
     """(prep, [record per item or None], unparked prep or None) for the builders of several items (build_bundle,
-    build_pack_fixed): each item's ff and off arms parked as build parks a single item (_park_item)."""
-    if not park:
+    build_pack_fixed): each item's ff and off arms parked as build parks a single item (_park_item), then, with
+    `likely` (release-0.3.1: True or tags), the likely value parked (_park_likely_item); a likely record rides in the
+    item's record under "park_likely"."""
+    if not park and not likely:
         return prep, [None] * len(prep), None
     out, recs, changed = [], [], False
     for t, p in zip(tags, prep):
         a, qc, off, succ, spec = p
-        rec, unparked, qc2, off2 = _park_item(t, qc, off)
-        changed |= unparked is not None
+        rec = None
+        if park:
+            rec, unparked, qc, off = _park_item(t, qc, off)
+            changed |= unparked is not None
+        if likely is True or (likely and likely is not True and t in set(likely)):
+            lrec, before, qc, off = _park_likely_item(t, qc, off)
+            if before is not None and likely_guard:
+                raise Refused(f"{t}: the declared psf-os {declared or os.environ.get('PSF_OS_DECLARED')} does not park "
+                              "the likely value by default and this psf-os does, and it would change this item: pass "
+                              "park_likely=False (the form the declared version built) or park_likely=True")
+            changed |= before is not None
+            rec = dict(rec or {}, park_likely=lrec)
         recs.append(rec)
-        out.append((a, qc2, off2, succ, spec))
+        out.append((a, qc, off, succ, spec))
     return out, recs, (prep if changed else None)
 
 
@@ -1060,10 +1120,12 @@ def _park_likely_item(tag, qc, off):
 
 
 def _park_physical(rec, chain):
-    """The parked qubits also as physical qubits (chain[k] for logical k)."""
-    for info in rec["arms"].values():
+    """The parked qubits also as physical qubits (chain[k] for logical k), in a likely record riding along too."""
+    for info in (rec.get("arms") or {}).values():
         for w in info.get("parked", []):
             w["physical"] = [chain[q] for q in w["qubits"]]
+    if isinstance(rec.get("park_likely"), dict):
+        _park_physical(rec["park_likely"], chain)
     return rec
 
 
@@ -1251,7 +1313,7 @@ CONDITIONAL_NEIGHBOURS_WHY = (
 
 def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None,
                  allow_conditional_neighbours=False, gap=BUNDLE_GAP, bit_order=None, behind_fixed_first=False,
-                 sentinel_over_test=False, record_checks="record", park=None, declared=None):
+                 sentinel_over_test=False, record_checks="record", park=None, declared=None, park_likely=None):
     """items: [(sub_tag, QuantumCircuit, spec)] as for build. One job of one bundle: the sub-items placed by
     bundle_place, every sub-item on its segment and its bits at an offset of one classical register; ff = the
     sub-items' circuits, off = their off arms (explicit or the conditionals removed), floor = floor_of(ff), one ring
@@ -1297,7 +1359,10 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
         raise Refused(f"{tag}: {e}") from None
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
     park, park_how = resolve_park(park, declared)
-    prep, park_recs, unparked_prep = _park_prep(tags, prep, park)
+    park_likely, likely_how, likely_guard = resolve_park_likely(park_likely, declared)
+    if not park and likely_how == "default":
+        park_likely = False                    # release-0.3.1: by default, the likely value is parked only with park
+    prep, park_recs, unparked_prep = _park_prep(tags, prep, park, park_likely, likely_guard, declared)
     with_cond = [t for t, p in zip(tags, prep) if p[0]["conditionals"]]
     shield = None
     if len(with_cond) >= 2 and not allow_conditional_neighbours and behind_fixed_first:
@@ -1397,7 +1462,9 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     if cover is not None:
         man_extra["sentinel_cover"] = cover
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra,
-                     build=_build_rec(park, park_how, declared))
+                     build=dict(_build_rec(park, park_how, declared),
+                                **({"park_likely": park_likely if park_likely is True else sorted(park_likely),
+                                    "park_likely_set": likely_how} if park_likely else {})))
     if record_checks == "record":
         row = _check_row(tag, logical["ff"], logical["off"], arms)
         if park:
@@ -1522,7 +1589,8 @@ def exact_distribution(qc, tol=1e-15):
 FIXED_PACK_TAG = "fixedpack"
 
 
-def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, park=None, declared=None):
+def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, park=None, declared=None,
+                     park_likely=None):
     """v0.2 prototype (2026-11-18): the production form of 2026-11-18's P-A. Every item's ff arm is its own circuit,
     placed on the segment bundle_place gives it; the fixed arms (no conditional) of all items are packed: one off
     circuit (the items' off arms side by side, one register with a bit offset per item) and one floor circuit
@@ -1545,7 +1613,10 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
         raise Refused(f"pack_fixed needs two or more distinct items with plain tags (not '{FIXED_PACK_TAG}'): {tags}")
     prep = [_prepare(t, qc, spec) for t, qc, spec in items]
     park, park_how = resolve_park(park, declared)
-    prep, park_recs, unparked_prep = _park_prep(tags, prep, park)
+    park_likely, likely_how, likely_guard = resolve_park_likely(park_likely, declared)
+    if not park and likely_how == "default":
+        park_likely = False                    # release-0.3.1: by default, the likely value is parked only with park
+    prep, park_recs, unparked_prep = _park_prep(tags, prep, park, park_likely, likely_guard, declared)
     sizes = [p[0]["n"] for p in prep]
     pl = bundle_place(dev, sizes)
     chain, segs = pl["chain"], pl["segments"]
@@ -1629,7 +1700,9 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
                      extra=dict(pack_fixed=dict(items=tags, packed=["off", "floor"]),
                                 conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)}),
-                     build=_build_rec(park, park_how, declared))
+                     build=dict(_build_rec(park, park_how, declared),
+                                **({"park_likely": park_likely if park_likely is True else sorted(park_likely),
+                                    "park_likely_set": likely_how} if park_likely else {})))
     rep = dict(device=dev.name, kind=KIND, pack_fixed=True, chain=chain, segments=segs, items=rep_items,
                circuits=len(man["pubs"]), qpu_seconds_model=man["qpu_seconds_model"], shots=shots,
                cz=dict(off=cz_count(packed["off"]), floor=cz_count(packed["floor"])))

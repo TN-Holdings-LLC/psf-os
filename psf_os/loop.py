@@ -900,7 +900,8 @@ class Night:
         """The night under its own park setting (park-default-2026-11-21): run.json's "park", False when absent (a
         night started before parking was the default), so a resumed old night builds as it began."""
         from psf_os import feedforward as FF
-        with FF.park_default(bool(self.cfg().get("park", False))):
+        c = self.cfg()
+        with FF.park_default(bool(c.get("park", False)), likely=bool(c.get("park_likely", False))):
             return self._go()
 
     def _go(self):
@@ -933,6 +934,16 @@ def _read(p):
 def _park_now():
     from psf_os import feedforward as FF
     return bool(FF.PARK_DEFAULT)
+
+
+def _park_likely_for(replay_from):
+    """release-0.3.1: a new night parks the likely value when the default does; a replay follows the recorded night's
+    run.json ("park_likely", False when absent)."""
+    from psf_os import feedforward as FF
+    if not replay_from:
+        return bool(FF.PARK_LIKELY_DEFAULT)
+    p = os.path.join(replay_from, "run.json")
+    return bool(json.load(open(p)).get("park_likely", False)) if os.path.exists(p) else False
 
 
 def _park_for(replay_from):
@@ -971,7 +982,8 @@ def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=
                started=now(), device=None, experiment=exp.name, **(extra or {}),
                **({"paired": True} if paired else {}),
                **({"replay_from": os.path.abspath(replay_from)} if replay_from else {}),
-               **({"park": True} if _park_for(replay_from) else {}))
+               **({"park": True} if _park_for(replay_from) else {}),
+               **({"park_likely": True} if _park_likely_for(replay_from) else {}))
     json.dump(cfg, open(os.path.join(out, "run.json"), "w"), indent=1)
     return Night(out, exp)
 
@@ -1057,7 +1069,7 @@ def verify(out, exp, resim=False):
     the night's park setting (park-default-2026-11-21: run.json's "park", False when absent)."""
     from psf_os import feedforward as FF
     cfg = json.load(open(os.path.join(os.path.abspath(out), "run.json")))
-    with FF.park_default(bool(cfg.get("park", False))):
+    with FF.park_default(bool(cfg.get("park", False)), likely=bool(cfg.get("park_likely", False))):
         return _verify(out, exp, resim)
 
 

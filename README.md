@@ -10,8 +10,9 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** 0.3.0 (2026-11-21): waiting qubits parked in |0> by default, the paired loop, replay of a recorded
-night (changes in [`CHANGELOG.md`](CHANGELOG.md)). Before it: 0.2.0 (2026-11-19; real-time control, the build rules
+**Status.** 0.3.1 (2026-11-22): the likely value of a waiting qubit parked in |0> by default (behind a
+partial fence), on top of 0.3.0's parking, paired loop and replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before
+it: 0.3.0 (2026-11-21; parking, the paired loop, replay) and 0.2.0 (2026-11-19; real-time control, the build rules
 and the compounding loop). Archived on Zenodo: every release
 [10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (resolves to the latest), 0.1.1
 [10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
@@ -126,6 +127,27 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 
 The experiment a loop runs is given from outside (circuits, scores, the first rule); the lab notebook's `gpu/os_loop.py`
 is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
+
+## The likely value is parked too (0.3.1)
+
+From 0.3.1, a build also parks every waiting qubit whose noiseless probability of |1> is above 0.5 (entangled ones
+included).
+
+- **How:** an X pair around the wait, kept by a partial fence on the parked qubits and the wait's own qubits, at those
+  waits only.
+- **Checks:** the same as park's, noiseless distribution and compiled CZ.
+- **Evidence:** on the RUS chains, +0.097 (NF) and +0.025 (P0) against 0.3.0's default in one job (ibm_kingston,
+  results/likely-park-night-2026-11-22).
+
+```python
+FF.build(dev, items, out)                        # parks the always-|1> and the likely-|1> waiting qubits
+FF.build(dev, items, out, park_likely=False)     # as 0.3.0, byte for byte
+with FF.park_default(True, likely=False):        # 0.3.0's defaults for a block
+    ...
+```
+
+A recorded build without the "park_likely" key is rebuilt without it. A tool declared on an earlier psf-os (a version
+before 0.3.1, or a commit) is refused for an item this would change, unless it says `park_likely`.
 
 ## Waiting qubits are parked in |0> (0.3.0)
 

@@ -1,13 +1,51 @@
 # Changelog
 
-## 0.3.1 (candidate, 2026-11-22; not released, not tagged; from v0.3.0)
+## 0.3.1 (2026-11-22)
 
-The version for the device test of `park_likely`. Its default stays off, as in 0.3.0. Every other default is
-0.3.0's: a declaration naming "0.3.1" builds as one naming "0.3.0" (the same park default, so the safety guard does not
-refuse). Whether `park_likely` becomes the default is decided after the device night, by the rule its declaration
-states.
+The code sent to the device on 2026-11-22 (a6170e5, results/likely-park-night-2026-11-22) and the release commit on top
+of it. The night read the declared rule's first row, so the release turns `park_likely` on by default. Every other
+default is 0.3.0's (park, paired, strict_cz, replay, ...).
 
-### The candidate (from the branch likely-park-2026-11-22)
+### Changed default
+
+- **The likely value is parked by default** (`build`, `build_bundle`, `build_pack_fixed`: `park_likely=None` means
+  `PARK_LIKELY_DEFAULT`, which is True).
+  - Where `park` applies (not with `park=False`; never on a `park_skip` item, the unparked twin), every waiting qubit
+    with a noiseless P(|1>) above 0.5 gets an X pair. The pair is behind a partial fence: the parked qubits and the
+    wait's own qubits, at those waits only.
+  - Checked at every build as `park` is: the noiseless distribution, and each arm's compiled CZ against the unparked
+    arms. Otherwise the build is refused.
+- **Rebuilding records.**
+  - A recorded build without the "park_likely" key is remade without it (`park_likely_of_record`).
+  - The loop's `verify` and a resumed night follow run.json's "park_likely" (absent: False); new nights record it.
+  - `park_default(False)` sets both park defaults off, as before 0.3.0; `park_default(value, likely=...)` sets them
+    apart.
+- **The safety guard.** A declared psf-os (`declared=` or PSF_OS_DECLARED) without this default: a version before
+  0.3.1, or a commit such as a6170e5. With it, a build that does not say `park_likely` is refused for any item that
+  parking the likely value would change. An item it leaves alone is built as either version builds it.
+  - The candidate a6170e5 also called itself "0.3.1", with the default off. Every build of it named `park_likely`
+    explicitly: the night's tool passes the L items by name.
+  - Rebuilt with this release, the night's job has the same gates in all 65 cells.
+- psf_os_build records `park_likely` and `park_likely_set` when it applies.
+
+### Evidence (L − D, the likely value parked against 0.3.0's default, in one job; IPE control beside)
+
+| night | device | NF m3 L3 | P0 L3 | P3 L3 | IPE control |
+|---|---|---|---|---|---|
+| 2026-11-21 (results/rus-fence-night-2026-11-21; on the full fence: M − F) | ibm_fez | +0.0877 KEEPS MORE | +0.0140 KEEPS MORE | +0.0021 SAME | +0.0291 KEEPS MORE |
+| 2026-11-22 (results/likely-park-night-2026-11-22; MP against D) | ibm_kingston | **+0.0972 KEEPS MORE** | **+0.0247 KEEPS MORE** | +0.0094 SAME | +0.0523 KEEPS MORE |
+
+No item overshot. The declared rule, applied to the counted items (none with a KEEPS LESS, two with a KEEPS MORE, the
+gate open), makes park_likely the default.
+
+### Limits
+
+- **Only the RUS chains and IPE.** Among the notebook's tools only IPE (always |1>, 0.3.0's park) and the RUS chains
+  have a waiting qubit to park. The textbook circuit, the repetition code and decoy's sub-item have none.
+- **MP has run on one night, one device** (ibm_kingston). The full-fence form ran on another (ibm_fez).
+- The rule uses noiseless probabilities. On the items run, every parked qubit was at P(|1>) 0.675 or above.
+
+### The candidate (from the branch likely-park-2026-11-22; its default was off)
 
 - **`footprint.park_likely(qc, threshold=0.5)`** and **`build(park_likely=False | True | [tags])`**.
   - After `park`, every waiting qubit whose noiseless probability of |1> is above 0.5 (entangled ones too) gets an X
