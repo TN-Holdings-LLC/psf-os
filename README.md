@@ -10,10 +10,12 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** 0.3.1 (2026-11-22): the likely value of a waiting qubit parked in |0> by default (behind a
-partial fence), on top of 0.3.0's parking, paired loop and replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before
-it: 0.3.0 (2026-11-21; parking, the paired loop, replay) and 0.2.0 (2026-11-19; real-time control, the build rules
-and the compounding loop). Archived on Zenodo: every release
+**Status.** 0.3.2 (candidate, 2026-11-23, not released): dt in the device record, delays in dt and µs with a
+limit, and the delays priced in the time model; see below. Released: 0.3.1 (2026-11-22): the likely value of a
+waiting qubit parked in |0> by default (behind a partial fence), on top of 0.3.0's parking, paired loop and
+replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before it: 0.3.0 (2026-11-21; parking, the paired loop,
+replay) and 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop). Archived on Zenodo:
+every release
 [10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (resolves to the latest), 0.1.1
 [10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
 their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook) (named TOQB until
@@ -127,6 +129,17 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 
 The experiment a loop runs is given from outside (circuits, scores, the first rule); the lab notebook's `gpu/os_loop.py`
 is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Time units and the charge for delays (0.3.2, candidate)
+
+- **dt in the device record.** The device record holds the backend's clock step `dt` (a unit of time, not a quality
+  number). A delay written in µs or ns is rewritten in dt before it is saved, because QPY keeps only dt.
+- **Delays recorded, with a limit.** Every job with delays records them in dt and µs. A circuit whose delay is longer
+  than `DELAY_LIMIT_US` (100 µs) is refused before anything is written, unless the build says
+  `allow_long_delay=True`.
+- **Delays priced.** The time model adds shots × the sum of the circuits' delays, since the device charges for that
+  time.
+- Jobs without delays, and records without a dt, build and are priced as before.
 
 ## The likely value is parked too (0.3.1)
 

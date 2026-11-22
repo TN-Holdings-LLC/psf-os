@@ -198,7 +198,7 @@ def test_a_pair_the_compiler_would_cancel_unfenced_is_refused(tmp_path):
 
 def test_version_and_the_guard_for_0_3_1(tmp_path, monkeypatch):
     import psf_os
-    assert psf_os.__version__ == "0.3.1"
+    assert FF.parks_likely_by_default(psf_os.__version__)             # 0.3.1 and later (0.3.2: the same default)
     assert FF.parks_by_default("0.3.1") is True and FF.parks_by_default("0.3.0") is True
     monkeypatch.setenv("PSF_OS_DECLARED", "0.3.1")
     assert FF.resolve_park(None) == (True, "default")              # the same park default as 0.3.0: no refusal
@@ -206,4 +206,5 @@ def test_version_and_the_guard_for_0_3_1(tmp_path, monkeypatch):
     out = str(tmp_path / "j")
     FF.build(dev, [("lk", _likely(), dict(success={4: 0}))], out, shots=500, sentinel_spec=SPEC, park_likely=True)
     b = json.load(open(os.path.join(out, "job", "manifest.json")))["psf_os_build"]
-    assert b["version"] == "0.3.1" and b["park"] is True and b["park_likely"] is True and b["declared"] == "0.3.1"
+    assert b["version"] == psf_os.__version__ and b["park"] is True and b["park_likely"] is True
+    assert b["declared"] == "0.3.1"

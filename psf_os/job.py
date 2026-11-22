@@ -108,6 +108,7 @@ def build(dev, job, runs, compiler=None, role="user", refs=True, name=None):
     for f in (jf, qf):
         if os.path.exists(f):
             raise FileExistsError(f"{f} exists: a run never overwrites another")
+    cs = delays_to_dt(cs, getattr(dev, "dt", None))
     with open(qf, "wb") as f:
         qpy.dump(cs, f)
     rec = dict(kind="psfos", psfos_role=role, psfos_job=dict(job), arm="fold:rule", version=VERSION, device=dev.name,
@@ -161,11 +162,67 @@ def verify_env(manifest, quiet=False):
     return dict(same=not differ, recorded=rec, here=here, differ=differ, note=note)
 
 
-def assemble(dev, runs, out, max_seconds=60, extra=None, build=None):
+DELAY_LIMIT_US = 100.0     # [OWNER] the longest delay one circuit may hold (0.3.2 candidate); allow_long_delay=True passes
+TIME_UNITS = {"s": 1.0, "ms": 1e-3, "us": 1e-6, "ns": 1e-9, "ps": 1e-12}
+
+
+def delays_to_dt(circuits, dt):
+    """The circuits with every delay written in a unit of time (s, ms, us, ns, ps) rewritten in dt, the device's clock
+    step: qiskit's QPY keeps a delay's duration but not its unit (2.5.2: a delay in us comes back as the same number of
+    dt, one in s is refused), so a delay reaches the job file in dt or not at all. Without a dt in the device record a
+    delay in a unit of time is refused (ValueError); delays already in dt are kept. A duration that is not a whole
+    number of dt (within 1e-6 of one) is refused. Circuits without such a delay are returned as they are."""
+    from qiskit.circuit import Delay
+    out = []
+    for c in circuits:
+        if not any(x.operation.name == "delay" and x.operation.unit in TIME_UNITS for x in c.data):
+            out.append(c)
+            continue
+        if not dt:
+            raise ValueError(f"{c.name}: a delay in a unit of time but the device record has no dt (fetch the device "
+                             "with psf-os 0.3.2 or later, or write the delay in dt)")
+        n = c.copy_empty_like()
+        for x in c.data:
+            op = x.operation
+            if op.name == "delay" and op.unit in TIME_UNITS:
+                k = float(op.duration) * TIME_UNITS[op.unit] / dt
+                if abs(k - round(k)) > 1e-6:
+                    raise ValueError(f"{c.name}: a delay of {op.duration} {op.unit} is not a whole number of dt "
+                                     f"({dt:g} s)")
+                op = Delay(int(round(k)), unit="dt")
+            n.append(op, x.qubits, x.clbits)
+        out.append(n)
+    return out
+
+
+def delay_record(circuits, dt):
+    """Per circuit holding a delay: its delay in dt (the longest sum over one qubit; every delay is in dt by
+    delays_to_dt) and, with a dt, in microseconds. Returns None when no circuit holds a delay."""
+    per = []
+    for k, c in enumerate(circuits):
+        tot = {}
+        for x in c.data:
+            if x.operation.name == "delay":
+                if x.operation.unit != "dt":
+                    raise ValueError(f"circuit {k}: a delay in {x.operation.unit}, not in dt (delays_to_dt first)")
+                q = c.find_bit(x.qubits[0]).index
+                tot[q] = tot.get(q, 0) + int(x.operation.duration)
+        if tot:
+            m = max(tot.values())
+            per.append(dict(pub=k, dt=m, us=round(m * dt * 1e6, 6) if dt else None))
+    return per or None
+
+
+def assemble(dev, runs, out, max_seconds=60, extra=None, build=None, allow_long_delay=False):
     """One job folder from every valid record in `runs`: circuits.qpy (in record order, references after the echo
     points) and manifest.json (cells, pubs, shots, the device record). Refuses an over-long job by the time model.
     v0.2 prototype (2026-11-18): the manifest also records the build environment (env, build_env()) and any `extra`
-    fields the builder passes; circuits.qpy is unchanged."""
+    fields the builder passes; circuits.qpy is unchanged.
+    0.3.2 (candidate): a job holding delays records them in dt and microseconds (manifest "delays"); a circuit whose
+    delay is longer than DELAY_LIMIT_US is refused before anything is written unless allow_long_delay; the delays are
+    priced in the time model (qpu_seconds, delay_seconds). A job without a delay gets the manifest and the seconds it
+    had before. Without a dt in the device record a delay in dt is recorded in dt only, neither limited nor priced
+    (the records before 0.3.2 rebuild unchanged)."""
     from qiskit import qpy
     if os.path.exists(out):
         raise FileExistsError(f"{out} exists: a job folder is never overwritten")
@@ -189,7 +246,17 @@ def assemble(dev, runs, out, max_seconds=60, extra=None, build=None):
         for k, c in enumerate(cs):
             pubs.append(dict(cell=cid, point=k))
             circuits.append(c)
-    seconds = qpu_seconds(len(circuits), shots)
+    step = getattr(dev, "dt", None)
+    dly = delay_record(circuits, step)
+    delay_s = sum(d["dt"] for d in dly) * step if (dly and step) else 0.0
+    if dly and step:
+        long_ = [d for d in dly if d["us"] > DELAY_LIMIT_US]
+        if long_ and not allow_long_delay:
+            w = max(long_, key=lambda d: d["us"])
+            raise RuntimeError(f"{len(long_)} circuit(s) hold a delay over {DELAY_LIMIT_US:g} us (the longest "
+                               f"{w['us']:g} us = {w['dt']} dt at dt {step:g} s, circuit {w['pub']}); shorten the "
+                               "delays or pass allow_long_delay=True")
+    seconds = qpu_seconds(len(circuits), shots, delay_s)
     if seconds > max_seconds:
         import math
         per = qpu_seconds(1, shots) - 3.0
@@ -210,6 +277,14 @@ def assemble(dev, runs, out, max_seconds=60, extra=None, build=None):
                stay=True,  # placed for this device's registry: TOQB's submit never moves it (TOQB job_stays)
                roles={c["name"]: c["role"] for c in cells},  # which cells are the user's, which are sentinels
                user_pubs=[k for k, p in enumerate(pubs) if cells[p["cell"]]["role"] == "user"])
+    if dly:
+        # 0.3.2 (candidate): only a job holding a delay gets this key
+        man["delays"] = dict(dt_seconds=step, limit_us=DELAY_LIMIT_US, allow_long_delay=bool(allow_long_delay),
+                             per_circuit=dly, longest_us=max(d["us"] for d in dly) if step else None,
+                             delay_seconds_per_shot=round(delay_s, 9) if step else None,
+                             qpu_seconds_delays=round(delay_s * shots, 1) if step else None,
+                             note=("priced in qpu_seconds_model: shots x the sum of the circuits' delays" if step else
+                                   "the device record has no dt: recorded in dt only, neither limited nor priced"))
     if any(c.has_control_flow_op() for c in circuits):
         # 2026-11-18: the job's broadcasts (conditionals and the bits their tests read), recorded, never enforced;
         # jobs without conditionals keep the manifest they had
@@ -228,9 +303,11 @@ def assemble(dev, runs, out, max_seconds=60, extra=None, build=None):
     return man
 
 
-def qpu_seconds(n_circuits, shots):
-    """The project's time model: 0.036 s per circuit + 0.00027 s per shot + 3 s per job."""
-    return n_circuits * 0.036 + n_circuits * shots * 0.00027 + 3.0
+def qpu_seconds(n_circuits, shots, delay_seconds=0.0):
+    """The project's time model: 0.036 s per circuit + 0.00027 s per shot + 3 s per job, and (0.3.2 candidate) the
+    delays, which the device charges: shots x delay_seconds, the sum over the job's circuits of each circuit's delay in
+    seconds. Without delays it is the model it was."""
+    return n_circuits * 0.036 + n_circuits * shots * 0.00027 + 3.0 + shots * delay_seconds
 
 
 # ------------------------------------------------------------------------------------------------ after the run

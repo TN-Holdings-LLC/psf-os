@@ -51,7 +51,8 @@ def fetch(svc, backend_name, out):
     """Write OUT/device.json for an IBM device: coupling graph and failed elements, nothing else."""
     backend = svc.backend(backend_name)
     dev = Dv.from_target(backend.target, backend.name, fake=False,
-                         source=dict(fetched=_stamp(), calibration_time=calibration_time(backend)))
+                         source=dict(fetched=_stamp(), calibration_time=calibration_time(backend)),
+                         step=getattr(backend, "dt", None))   # 0.3.2: the clock step, a unit of time (not a quality number)
     dev.save(out)
     return dev
 

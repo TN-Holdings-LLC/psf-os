@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.3.2 (candidate, 2026-11-23; not tagged, not released)
+
+Time units and the charge for delays. On 2026-11-22 (results/ipe-branch-cost-night-2026-11-22) a test was declared
+with delays written as a number of dt while dt was unknown. Read at run time, dt was 4 ns, so the delay per
+conditional was 18 µs and each circuit idled 270 to 1008 µs. The job was charged 112 s against a model of 59.6 s,
+because the model priced no delay. A job without delays builds and is priced exactly as in 0.3.1.
+
+### Added
+
+- **`dt` in the device record.**
+  - What it is: `Device.dt` is the backend configuration's clock step in seconds. It is a unit of time, the same for
+    every qubit, not a calibration or quality number.
+  - Where it comes from: `ibm.fetch` and `fetch_fake` pass it to `from_target(..., step=backend.dt)`. `from_target`
+    itself still reads failed marks only (test T6 unchanged).
+  - Older records: a record without dt loads as before (`dt=None`) and is written without the key, so records before
+    0.3.2 stay byte for byte.
+- **Delays reach the job file in dt.** `job.delays_to_dt` rewrites every delay written in a unit of time (s, ms, us,
+  ns, ps) in dt before the run records' QPY is written (`user2d._record`, `job.build`). qiskit 2.5.2's QPY keeps a
+  delay's duration but not its unit: a delay in us came back as the same number of dt, and one in s was refused.
+  - **Refused:** a delay in a unit of time without a dt in the device record, and a duration that is not a whole
+    number of dt.
+  - Delays already in dt are kept.
+- **Delays recorded.** A job holding a delay gets the manifest key `delays`:
+  - dt;
+  - the limit;
+  - per circuit its delay in dt and µs (the longest sum over one qubit);
+  - the longest;
+  - the seconds they add.
+
+  A job without a delay has no such key.
+- **The limit.** `DELAY_LIMIT_US` = 100 µs [OWNER] is the longest delay one circuit may hold. `job.assemble` refuses a
+  job with a longer one before anything is written, unless `allow_long_delay=True`. The switch is passed by `build`,
+  `build_bundle` and `build_pack_fixed`.
+  - Without a dt, delays in dt are recorded in dt only, and are neither limited nor priced. This keeps the earlier
+    records' rebuilds unchanged.
+
+### Changed
+
+- **The time model prices the delays.**
+  - The formula: `qpu_seconds(n_circuits, shots, delay_seconds=0.0)` adds `shots × delay_seconds`, where
+    `delay_seconds` is the sum of the circuits' delays.
+  - Where it is used: `assemble` passes the delays, so `qpu_seconds_model`, the `max_seconds` refusal and the loop's
+    budget (which reads `qpu_seconds_model` from build.json) all include them.
+  - Without delays the value is the one 0.3.1 gave.
+  - The night of 2026-11-22 rebuilt with its dt gives 59.6 + 54.8 = 114.4 s against 112 s charged (+2.1 %). The
+    105-job relation (2.6 s + 0.000269 s per circuit-shot) with the same delay term gives 111.4 s. The base of the
+    model is not changed here.
+
 ## 0.3.1 (2026-11-22)
 
 The code sent to the device on 2026-11-22 (a6170e5, results/likely-park-night-2026-11-22) and the release commit on top

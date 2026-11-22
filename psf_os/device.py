@@ -5,6 +5,12 @@ touches a Target's error field is `failed_elements`, and only to see the failed 
 is how IBM marks an element that must not be used (ported from TOQB toqb/devices.py `_failed` and toqb/fold.py
 `bad` at 8d44f05). Everything after that uses the Device record below, and `map_free_target` rebuilds a Qiskit Target
 from it with no error and no duration, so that the compiler cannot read a map either (test T6).
+
+0.3.2 (candidate): the record also holds `dt`, the backend configuration's clock step in seconds (backend.dt, passed
+to from_target by the fetch: from_target itself still reads failed marks only, test T6). It is a unit of time, the
+same for every qubit, not a calibration or quality number: it converts delays between dt and seconds and prices them
+in the time model (job.assemble). A record without it (every record before 0.3.2) loads and
+builds as before; its JSON is written without the key, so old records stay byte for byte.
 """
 from __future__ import annotations
 
@@ -28,6 +34,7 @@ class Device:
     fetched: str = ""
     masked: list = field(default_factory=list)   # couplers masked by the registry (also in failed_couplers)
     source: dict = field(default_factory=dict)
+    dt: float | None = None   # the clock step in seconds (backend configuration), a unit of time, not a quality number
 
     # -- views used by the placement
     def working_couplers(self):
@@ -42,7 +49,10 @@ class Device:
 
     # -- files
     def to_json(self):
-        return asdict(self)
+        d = asdict(self)
+        if d.get("dt") is None:
+            d.pop("dt", None)     # records without a dt keep the JSON they had before 0.3.2
+        return d
 
     def save(self, folder):
         os.makedirs(folder, exist_ok=False)
@@ -75,20 +85,23 @@ def failed_elements(target):
     return all_c, failed_c, failed_q
 
 
-def from_target(target, name, fake=False, source=None):
+def from_target(target, name, fake=False, source=None, step=None):
+    """The device record from a Target: failed marks only. step, the clock step dt (0.3.2), is passed in by the
+    caller, read from the backend (backend.dt); this function reads nothing else of the Target (test T6 guards it)."""
     all_c, failed_c, failed_q = failed_elements(target)
     from zoneinfo import ZoneInfo
     now = dt.datetime.now(ZoneInfo("Europe/Zurich")).isoformat(timespec="seconds")  # records are in CET (owner)
     return Device(name=name, num_qubits=target.num_qubits, couplers=[list(e) for e in all_c],
                   failed_couplers=[list(e) for e in failed_c], failed_qubits=list(failed_q), fake=fake, fetched=now,
-                  source=dict(source or {}))
+                  source=dict(source or {}), dt=float(step) if step else None)
 
 
 def fetch_fake(fake_name):
     """A fake device of qiskit-ibm-runtime (FakeFez, FakeMarrakesh, FakeKingston, ...)."""
     from qiskit_ibm_runtime import fake_provider
     b = getattr(fake_provider, fake_name)()
-    return from_target(b.target, b.name, fake=True, source=dict(kind="fake", cls=fake_name))
+    return from_target(b.target, b.name, fake=True, source=dict(kind="fake", cls=fake_name),
+                       step=getattr(b, "dt", None))
 
 
 def map_free_target(dev):

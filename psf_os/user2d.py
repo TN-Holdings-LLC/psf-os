@@ -116,6 +116,8 @@ def _record(dev, runs, name, role, kind, circuits, points, labels, mapping, extr
     for f in (jf, qf):
         if os.path.exists(f):
             raise FileExistsError(f"{f} exists: a run never overwrites another")
+    from psf_os.job import delays_to_dt
+    circuits = delays_to_dt(circuits, getattr(dev, "dt", None))     # 0.3.2: QPY keeps delays in dt only
     with open(qf, "wb") as f:
         qpy.dump(circuits, f)
     rec = dict(kind="psfos", psfos_role=role, psfos_job=dict(kind=kind), arm="patch:copy", version=VERSION,

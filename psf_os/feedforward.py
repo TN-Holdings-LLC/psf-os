@@ -820,7 +820,7 @@ def park_of_record(rec):
 
 def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chains=None, pack_fixed=False,
           strict_cz=False, footprint=False, sentinel_over_test=False, fence=False, record_checks="record",
-          ff_only=(), park=None, declared=None, park_skip=(), park_likely=None):
+          ff_only=(), park=None, declared=None, park_skip=(), park_likely=None, allow_long_delay=False):
     """items: [(tag, QuantumCircuit, spec)], spec either dict(success={clbit: value}, bound=float | None) (a success
     test such as teleport_test) or the dict rus_chain returns (kind "rus": out_bit, tries per neuron, exact, form
     "blocks"). One job: per item its ff, off and floor arms (for "rus" the off arm is also read post-selected:
@@ -887,7 +887,8 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         if chains:
             raise Refused("pack_fixed places the items itself (bundle_place); chains cannot be given with it")
         return build_pack_fixed(dev, items, out, shots=shots, max_seconds=max_seconds, sentinel_spec=sentinel_spec,
-                                park=park, declared=declared, park_likely=park_likely)
+                                park=park, declared=declared, park_likely=park_likely,
+                                allow_long_delay=allow_long_delay)
     if os.path.exists(out):
         raise Refused(f"{out} exists (nothing is overwritten)")
     tags = [t for t, _, _ in items]
@@ -1028,7 +1029,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
                               **({"park": park_rec} if park_rec is not None else {}))
     cover = _sentinel(dev, runs, shots, sentinel_spec,
                       cover=sorted({q for p in prepared for q in p[4]["chain"]}) if sentinel_over_test else None)
-    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, allow_long_delay=allow_long_delay,
                      **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}),
                      build=dict(_build_rec(park, park_how, declared),
                                 **({"park_likely": park_likely if park_likely is True else sorted(park_likely)}
@@ -1313,7 +1314,8 @@ CONDITIONAL_NEIGHBOURS_WHY = (
 
 def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentinel_spec=None,
                  allow_conditional_neighbours=False, gap=BUNDLE_GAP, bit_order=None, behind_fixed_first=False,
-                 sentinel_over_test=False, record_checks="record", park=None, declared=None, park_likely=None):
+                 sentinel_over_test=False, record_checks="record", park=None, declared=None, park_likely=None,
+                 allow_long_delay=False):
     """items: [(sub_tag, QuantumCircuit, spec)] as for build. One job of one bundle: the sub-items placed by
     bundle_place, every sub-item on its segment and its bits at an offset of one classical register; ff = the
     sub-items' circuits, off = their off arms (explicit or the conditionals removed), floor = floor_of(ff), one ring
@@ -1462,6 +1464,7 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     if cover is not None:
         man_extra["sentinel_cover"] = cover
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra,
+                     allow_long_delay=allow_long_delay,
                      build=dict(_build_rec(park, park_how, declared),
                                 **({"park_likely": park_likely if park_likely is True else sorted(park_likely),
                                     "park_likely_set": likely_how} if park_likely else {})))
@@ -1590,7 +1593,7 @@ FIXED_PACK_TAG = "fixedpack"
 
 
 def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, park=None, declared=None,
-                     park_likely=None):
+                     park_likely=None, allow_long_delay=False):
     """v0.2 prototype (2026-11-18): the production form of 2026-11-18's P-A. Every item's ff arm is its own circuit,
     placed on the segment bundle_place gives it; the fixed arms (no conditional) of all items are packed: one off
     circuit (the items' off arms side by side, one register with a bit offset per item) and one floor circuit
@@ -1697,7 +1700,7 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
                   extra=dict(pextra, ff_arm=arm, cz=cz_count(c), checks=chk_p[arm]), valid=True, labels=labels,
                   mapping={k: chain[k] for k in labels}, shots=shots)
     _sentinel(dev, runs, shots, sentinel_spec)
-    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds,
+    man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, allow_long_delay=allow_long_delay,
                      extra=dict(pack_fixed=dict(items=tags, packed=["off", "floor"]),
                                 conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)}),
                      build=dict(_build_rec(park, park_how, declared),
