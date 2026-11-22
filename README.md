@@ -10,8 +10,8 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** 0.3.2 (candidate, 2026-11-23, not released): dt in the device record, delays in dt and µs with a
-limit, and the delays priced in the time model; see below. Released: 0.3.1 (2026-11-22): the likely value of a
+**Status.** 0.3.2 (2026-11-23): dt in the device record, delays in dt and µs with a limit, and the delays
+priced in the time model; see below. Before it: 0.3.1 (2026-11-22): the likely value of a
 waiting qubit parked in |0> by default (behind a partial fence), on top of 0.3.0's parking, paired loop and
 replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before it: 0.3.0 (2026-11-21; parking, the paired loop,
 replay) and 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop). Archived on Zenodo:
@@ -130,7 +130,7 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 The experiment a loop runs is given from outside (circuits, scores, the first rule); the lab notebook's `gpu/os_loop.py`
 is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
 
-## Time units and the charge for delays (0.3.2, candidate)
+## Time units and the charge for delays (0.3.2)
 
 - **dt in the device record.** The device record holds the backend's clock step `dt` (a unit of time, not a quality
   number). A delay written in µs or ns is rewritten in dt before it is saved, because QPY keeps only dt.

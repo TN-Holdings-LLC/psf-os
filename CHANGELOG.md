@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.2 (candidate, 2026-11-23; not tagged, not released)
+## 0.3.2 (2026-11-23)
 
 Time units and the charge for delays. On 2026-11-22 (results/ipe-branch-cost-night-2026-11-22) a test was declared
 with delays written as a number of dt while dt was unknown. Read at run time, dt was 4 ns, so the delay per
