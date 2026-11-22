@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased (branch likely-park-2026-11-22, from v0.3.0; a 0.3.1 candidate, off by default)
+## 0.3.1 (candidate, 2026-11-22; not released, not tagged; from v0.3.0)
+
+The version for the device test of `park_likely`. Its default stays off, as in 0.3.0. Every other default is
+0.3.0's: a declaration naming "0.3.1" builds as one naming "0.3.0" (the same park default, so the safety guard does not
+refuse). Whether `park_likely` becomes the default is decided after the device night, by the rule its declaration
+states.
+
+### The candidate (from the branch likely-park-2026-11-22)
 
 - **`footprint.park_likely(qc, threshold=0.5)`** and **`build(park_likely=False | True | [tags])`**.
   - After `park`, every waiting qubit whose noiseless probability of |1> is above 0.5 (entangled ones too) gets an X

@@ -150,3 +150,16 @@ def test_a_pair_the_compiler_would_cancel_unfenced_is_refused(tmp_path):
     with pytest.raises(FF.Refused, match="changed the compiled CZ count"):
         FF.build(dev, [("cx", _likely_cx(), dict(success={4: 0}))], str(tmp_path / "x"), shots=500, sentinel_spec=SPEC,
                  park=True, park_likely=True)
+
+
+def test_version_and_the_guard_for_0_3_1(tmp_path, monkeypatch):
+    import psf_os
+    assert psf_os.__version__ == "0.3.1"
+    assert FF.parks_by_default("0.3.1") is True and FF.parks_by_default("0.3.0") is True
+    monkeypatch.setenv("PSF_OS_DECLARED", "0.3.1")
+    assert FF.resolve_park(None) == (True, "default")              # the same park default as 0.3.0: no refusal
+    dev = Dv.fetch_fake("FakeFez")
+    out = str(tmp_path / "j")
+    FF.build(dev, [("lk", _likely(), dict(success={4: 0}))], out, shots=500, sentinel_spec=SPEC, park_likely=True)
+    b = json.load(open(os.path.join(out, "job", "manifest.json")))["psf_os_build"]
+    assert b["version"] == "0.3.1" and b["park"] is True and b["park_likely"] is True and b["declared"] == "0.3.1"

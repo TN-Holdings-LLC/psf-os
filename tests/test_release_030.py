@@ -30,7 +30,8 @@ def _ipe_like():
 
 
 def test_version_is_0_3_0():
-    assert psf_os.__version__ == "0.3.0"
+    # 0.3.0 or a later 0.3.x (0.3.1 candidate, likely-park-2026-11-22): the same park default
+    assert psf_os.__version__.startswith("0.3.") and FF.parks_by_default(psf_os.__version__)
 
 
 def test_parks_by_default_reads_versions_and_commits():
@@ -49,7 +50,7 @@ def test_the_guard_refuses_a_build_that_does_not_say_park(tmp_path, monkeypatch)
         FF.build(dev, items, str(tmp_path / "b"), shots=500, sentinel_spec=SPEC)
     FF.build(dev, items, str(tmp_path / "c"), shots=500, sentinel_spec=SPEC, park=False)      # said: built
     man = json.load(open(tmp_path / "c" / "job" / "manifest.json"))
-    assert man["psf_os_build"] == dict(version="0.3.0", park=False, park_set="explicit", declared="a164fc5")
+    assert man["psf_os_build"] == dict(version=psf_os.__version__, park=False, park_set="explicit", declared="a164fc5")
     monkeypatch.setenv("PSF_OS_DECLARED", "0.3.0")
     FF.build(dev, items, str(tmp_path / "d"), shots=500, sentinel_spec=SPEC)                  # the same default
     man = json.load(open(tmp_path / "d" / "job" / "manifest.json"))
