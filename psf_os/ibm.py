@@ -52,7 +52,8 @@ def fetch(svc, backend_name, out):
     backend = svc.backend(backend_name)
     dev = Dv.from_target(backend.target, backend.name, fake=False,
                          source=dict(fetched=_stamp(), calibration_time=calibration_time(backend)),
-                         step=getattr(backend, "dt", None))   # 0.3.2: the clock step, a unit of time (not a quality number)
+                         step=getattr(backend, "dt", None),   # 0.3.2: the clock step, a unit of time (not a quality number)
+                         timing=Dv.timing_of(backend.target, getattr(backend, "dt", None)))  # 0.3.3rc1: lengths of time only
     dev.save(out)
     return dev
 

@@ -11,6 +11,15 @@ to from_target by the fetch: from_target itself still reads failed marks only, t
 same for every qubit, not a calibration or quality number: it converts delays between dt and seconds and prices them
 in the time model (job.assemble). A record without it (every record before 0.3.2) loads and
 builds as before; its JSON is written without the key, so old records stay byte for byte.
+
+0.3.3rc1 (candidate; the owner's decision of 2026-11-23): the record may also hold `timing`, read by the fetch with
+`timing_of` from the backend's Target: the duration of x, sx, cz, measure and reset per qubit or coupler, in dt, and
+the timing constraints (granularity, min_length, pulse_alignment, acquire_alignment). These are units and lengths of
+time, which the owner allowed to be read; no error rate, no T1, T2 or frequency is read (test T6 still guards
+from_target, which reads failed marks only; test_checks_durations guards timing_of). The compiler never sees them
+(map_free_target has no duration): they are used to refuse a delay that does not fit the device's time grid and to
+estimate, beside the job, how long a circuit and its waits last. A record without it builds as before and its JSON
+is written without the key.
 """
 from __future__ import annotations
 
@@ -35,6 +44,7 @@ class Device:
     masked: list = field(default_factory=list)   # couplers masked by the registry (also in failed_couplers)
     source: dict = field(default_factory=dict)
     dt: float | None = None   # the clock step in seconds (backend configuration), a unit of time, not a quality number
+    timing: dict | None = None  # 0.3.3rc1: durations (dt) and timing constraints, time values only (timing_of)
 
     # -- views used by the placement
     def working_couplers(self):
@@ -52,6 +62,8 @@ class Device:
         d = asdict(self)
         if d.get("dt") is None:
             d.pop("dt", None)     # records without a dt keep the JSON they had before 0.3.2
+        if d.get("timing") is None:
+            d.pop("timing", None)  # records without timing keep the JSON they had before 0.3.3rc1
         return d
 
     def save(self, folder):
@@ -85,15 +97,58 @@ def failed_elements(target):
     return all_c, failed_c, failed_q
 
 
-def from_target(target, name, fake=False, source=None, step=None):
+def from_target(target, name, fake=False, source=None, step=None, timing=None):
     """The device record from a Target: failed marks only. step, the clock step dt (0.3.2), is passed in by the
-    caller, read from the backend (backend.dt); this function reads nothing else of the Target (test T6 guards it)."""
+    caller, read from the backend (backend.dt); timing (0.3.3rc1), timing_of's record, likewise. This function reads
+    nothing else of the Target (test T6 guards it)."""
     all_c, failed_c, failed_q = failed_elements(target)
     from zoneinfo import ZoneInfo
     now = dt.datetime.now(ZoneInfo("Europe/Zurich")).isoformat(timespec="seconds")  # records are in CET (owner)
     return Device(name=name, num_qubits=target.num_qubits, couplers=[list(e) for e in all_c],
                   failed_couplers=[list(e) for e in failed_c], failed_qubits=list(failed_q), fake=fake, fetched=now,
-                  source=dict(source or {}), dt=float(step) if step else None)
+                  source=dict(source or {}), dt=float(step) if step else None, timing=timing or None)
+
+
+TIMING_GATES = ("x", "sx", "cz", "measure", "reset")
+TIMING_CONSTRAINTS = ("granularity", "min_length", "pulse_alignment", "acquire_alignment")
+
+
+def timing_of(target, step):
+    """The time values of a Target (0.3.3rc1; the owner allowed lengths of time to be read, never an error number):
+    dict(durations={gate: {"q" or "a,b": length in dt}}, constraints={granularity, min_length, pulse_alignment,
+    acquire_alignment} in dt). Only an instruction property's `duration` is read, and only for TIMING_GATES; a duration
+    that is not a whole number of dt (within 1e-6) is left out and named in `not_whole`. None without a dt."""
+    if not step:
+        return None
+    durations, not_whole = {}, []
+    names = set(target.operation_names)
+    for g in TIMING_GATES:
+        if g not in names:
+            continue
+        per = {}
+        for qa, props in target[g].items():
+            if qa is None or props is None:
+                continue
+            d = props.duration                       # a length of time (seconds); the error field is never read
+            if d is None:
+                continue
+            k = float(d) / float(step)
+            key = ",".join(str(q) for q in qa)
+            if abs(k - round(k)) > 1e-6:
+                not_whole.append(f"{g}[{key}]")
+                continue
+            per[key] = int(round(k))
+        if per:
+            durations[g] = per
+    constraints = {}
+    for c in TIMING_CONSTRAINTS:
+        v = getattr(target, c, None)
+        if v is not None:
+            constraints[c] = int(v)
+    out = dict(durations=durations, constraints=constraints, unit="dt")
+    if not_whole:
+        out["not_whole"] = sorted(not_whole)
+    return out
 
 
 def fetch_fake(fake_name):
@@ -101,7 +156,7 @@ def fetch_fake(fake_name):
     from qiskit_ibm_runtime import fake_provider
     b = getattr(fake_provider, fake_name)()
     return from_target(b.target, b.name, fake=True, source=dict(kind="fake", cls=fake_name),
-                       step=getattr(b, "dt", None))
+                       step=getattr(b, "dt", None), timing=timing_of(b.target, getattr(b, "dt", None)))
 
 
 def map_free_target(dev):

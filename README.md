@@ -10,8 +10,11 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** 0.3.2 (2026-11-23): dt in the device record, delays in dt and µs with a limit, and the delays
-priced in the time model; see below. Before it: 0.3.1 (2026-11-22): the likely value of a
+**Status.** 0.3.3rc1 (candidate, 2026-11-23; not released): the parking checked in the compiled circuit, the
+waits and the fences' cost recorded, lengths of time in the device record, delays on the device's time grid, and the
+loop paired by default on the device; see below. A candidate is named `X.Y.ZrcN` and becomes `X.Y.Z` only when
+released. Released: 0.3.2 (2026-11-23): dt in the device record, delays in dt and µs with a limit, and the delays
+priced in the time model. Before it: 0.3.1 (2026-11-22): the likely value of a
 waiting qubit parked in |0> by default (behind a partial fence), on top of 0.3.0's parking, paired loop and
 replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before it: 0.3.0 (2026-11-21; parking, the paired loop,
 replay) and 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop). Archived on Zenodo:
@@ -130,6 +133,20 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 The experiment a loop runs is given from outside (circuits, scores, the first rule); the lab notebook's `gpu/os_loop.py`
 is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
 
+## The circuit as sent, checked (0.3.3rc1, candidate)
+
+- **Parking checked after compiling.** Every build follows each compiled arm noiselessly, branch by branch, through
+  every wait. A qubit parked because it was in |1> on every branch must have P(|1>) 0 during the wait; one parked
+  because it was more likely in |1>, below 0.5. Otherwise the build is refused.
+- **Recorded beside the job** (`manifest["compiled"]`): per wait and waiting qubit, P(|1>) and whether it is entangled;
+  the depth without and with psf-os's fences; per circuit a summary (CZ, depth, gate-sequence hash) that `verify`
+  compares across versions in one line.
+- **Lengths of time.** The device record may hold the durations of x, sx, cz, measure and reset and the timing
+  constraints (lengths of time only, never an error number). A delay off the device's time grid is refused; each
+  conditional's wait is estimated as a lower bound (the decision latency is in no record).
+- **The loop pairs on the device by default.** Deciding across jobs needs `cross_job=True`.
+- Every circuit 0.3.2 builds is built byte for byte the same.
+
 ## Time units and the charge for delays (0.3.2)
 
 - **dt in the device record.** The device record holds the backend's clock step `dt` (a unit of time, not a quality
@@ -237,6 +254,7 @@ or more each), and `PSF_OS_HEAVY=1` adds the one heavy tensor-network test, skip
 | T4 | the sh6 identity (OS plan M3, second form) and the echo, entered through the L6 interface on three fake devices, return every bit without noise |
 | T5 | the frame flip leaves the ideal circuit unchanged (operator equality); the repair rules |
 | T6 | the chain runs through a Target wrapper that lets an error value be compared only with the failed mark and raises on any other quality read; the device record and the compiler's Target hold no quality number |
+| checks (0.3.3rc1) | the candidate's name and PEP 440 order; `timing_of` reads durations and timing constraints only (a wrapper raises on any other read); a delay off the time grid refused; a parked build checked in its compiled circuit, and a parking the compiler did not keep refused; bundles and pack_fixed checked per sub-item; the circuits the same with and without timing; verify's summary line; the loop paired on the device by default |
 | bridge | the notebook's `s2rc_device submit --local` runs a psf-os job folder, and psf-os scores what it writes |
 | S1-S6 | sentinels: the user's circuits byte-identical with or without them; CLEAN without noise; a coupler planted after placement is flagged DEAD with a run around it; the finding is gray for that day only and adds nothing to LISTED; the time-model cap stops an over-long job; no map is read |
 | Q1-Q4 | practice problems: each exact answer agrees by two independent methods; full score without noise; with planted two-qubit depolarizing errors the cluster parity and P1's read stabilizers are better on the avoiding ring; no map is read |

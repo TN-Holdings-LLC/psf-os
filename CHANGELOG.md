@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.3.3rc1 (candidate, 2026-11-23; not tagged, not released)
+
+Checks of the circuit as sent, and the device's lengths of time. Every circuit that 0.3.2 builds, 0.3.3rc1 builds byte
+for byte the same (the six recorded nights of 2026-11-21 and 2026-11-22 rebuilt with both: every file the same); what
+is new is checked and recorded beside the job.
+
+### The name of a candidate
+
+- **A candidate is named `X.Y.ZrcN`** (PEP 440) and becomes `X.Y.Z` only when it is released. 0.3.1's candidate
+  (a6170e5, the likely value not parked by default) and its release (7caedaa, parked) both said "0.3.1"; this cannot
+  happen again.
+- Versions are compared in PEP 440's order (`feedforward.version_key`): `0.3.3rc1` comes before `0.3.3`. The safety
+  checks of a declared version (`parks_by_default`, `parks_likely_by_default`) use that order, so a candidate is never
+  taken for its release; `feedforward.same_version` compares the exact name, rc included.
+
+### Added
+
+- **The parking checked in the compiled circuit** (`psf_os.compiled`, used by `build`, `build_bundle` and
+  `build_pack_fixed`). Every build follows each compiled arm noiselessly, branch by branch, through every wait (a
+  mid-circuit read with the conditionals after it, or a run of conditionals on bits read earlier). A qubit that psf-os
+  parked must stay parked in the compiled circuit for the whole wait:
+  - parked because it was in |1> on every branch: P(|1>) 0 during the wait;
+  - parked because it was more likely in |1>: P(|1>) below 0.5 during the wait.
+
+  Otherwise the build is refused before anything is written. A wait is found in the compiled circuit by its anchors,
+  which compilation keeps: each measurement by its bit and the how-many-th write to it, each conditional by its test
+  and the how-many-th conditional with that test.
+- **The waits as sent, in the manifest.** `manifest["compiled"]["records"]`, per record and arm: every wait with, per
+  waiting qubit (physical), P(|1>) at its start and the largest during it, and whether it is entangled in any branch;
+  the parked waits checked.
+- **The fences' cost, in the manifest.** For an arm that psf-os fenced or parked, the compiled depth without and with
+  them; with durations in the device record also the lengths in dt and µs.
+- **A summary of every circuit as sent.** `manifest["compiled"]["summary"]`, per circuit: CZ, depth and the SHA-256 of
+  its gate sequence (conditional blocks opened, RZ in (-pi, pi]: `gatehash`). `loop.verify` prints, beside each job's
+  SAME or DIFFERENT, one line on what changed (`loop.summary_line`), from the manifests' summaries or, for a job
+  recorded before 0.3.3rc1, from its circuits.
+- **Lengths of time in the device record** (the owner's permission of 2026-11-23: lengths of time may be read, no error
+  number). `Device.timing`, read by the fetch with `device.timing_of`: the duration of x, sx, cz, measure and reset per
+  qubit or coupler, in dt, and the timing constraints (granularity, min_length, pulse_alignment, acquire_alignment).
+  Only an instruction property's `duration` is read. `from_target` still reads failed marks only (T6 unchanged); the
+  compiler still sees no duration (`map_free_target`). A record without timing builds as before and is written
+  without the key.
+- **Delays on the device's time grid.** With timing constraints in the device record, a delay whose length is not a
+  multiple of the granularity and the pulse alignment, or is shorter than min_length, is refused before the job is
+  written (`job.delay_grid_problems`).
+- **The conditionals' waits estimated.** With durations in the device record, `compiled.lengths` gives each compiled
+  arm's length and, per conditional, the measurement it reads and its longest block, in dt: a lower bound of the wait,
+  the decision latency being in no record.
+
+### Changed
+
+- **The loop pairs by default on the device.** `loop.start(paired=None)`: a device night is paired (the incumbent and
+  the candidate in the same job), since the same circuits drift between jobs (results/loopvar-night-2026-11-20: L 2,
+  p 0.006). A device night that decides across jobs is refused unless `cross_job=True`, which run.json records. Dry
+  runs keep their default; recorded nights verify and replay from their own run.json.
+- `loop.same_job` leaves out a manifest key added after the recorded build (`compiled`), as it leaves out the build
+  environment; the circuits are compared as before.
+
+### Tests
+
+`tests/test_checks_durations.py` (12). `TOQB_DIR` set: see the README.
+
 ## 0.3.2 (2026-11-23)
 
 Time units and the charge for delays. On 2026-11-22 (results/ipe-branch-cost-night-2026-11-22) a test was declared

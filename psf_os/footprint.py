@@ -385,16 +385,13 @@ def _windows(f):
     return out
 
 
-def park_waits(qc):
-    """(circuit, info): qc with every waiting qubit that is in |1> in every branch put in |0> for the wait (X before
-    the wait's fence, X after its closing fence; the waits fenced as fence_waits(conditionals=True), so that the
-    compiler can neither cancel the pair nor move gates into the wait). When no qubit is parked, qc itself is
-    returned unchanged (not fenced) and info["parked"] is empty. Checked here: the exact distribution of the classical
-    bits is the same as qc's (else ValueError). Above the footprint's bounds: ValueError (the caller keeps qc)."""
+def _decide_always(qc):
+    """(f, windows, plan) of park_waits: f = fence_waits(qc, conditionals=True), its windows, and per window the
+    waiting qubits in |1> in every branch under "qubits"."""
     f = fence_waits(qc, conditionals=True)
     wins = _windows(f)
     if not wins:
-        return qc, dict(parked=[], waits=0)
+        return f, wins, []
     _, sim = _simulate(f, [w["start"] for w in wins])
     act, pos = sim["act"], sim["pos"]
     plan = []
@@ -408,6 +405,25 @@ def park_waits(qc):
             if all(p < EPS or (abs(_reduced(sv.data, k, len(act))[1, 1].real - 1) < EPS) for p, sv, _ in brs):
                 put.append(q)
         plan.append(dict(w, qubits=put))
+    return f, wins, plan
+
+
+def park_plan(qc):
+    """0.3.3rc1: park_waits' plan as anchored waits for psf_os.compiled.check_parked ([] when nothing is parked)."""
+    from psf_os.compiled import plan_anchors
+    f, wins, plan = _decide_always(qc)
+    return plan_anchors(f, plan, "always") if wins else []
+
+
+def park_waits(qc):
+    """(circuit, info): qc with every waiting qubit that is in |1> in every branch put in |0> for the wait (X before
+    the wait's fence, X after its closing fence; the waits fenced as fence_waits(conditionals=True), so that the
+    compiler can neither cancel the pair nor move gates into the wait). When no qubit is parked, qc itself is
+    returned unchanged (not fenced) and info["parked"] is empty. Checked here: the exact distribution of the classical
+    bits is the same as qc's (else ValueError). Above the footprint's bounds: ValueError (the caller keeps qc)."""
+    f, wins, plan = _decide_always(qc)
+    if not wins:
+        return qc, dict(parked=[], waits=0)
     if not any(w["qubits"] for w in plan):
         return qc, dict(parked=[], waits=len(wins))
     before = {w["start"]: w["qubits"] for w in plan if w["qubits"]}
@@ -457,16 +473,13 @@ def _fence_inserted(qc, f):
     return ins
 
 
-def park_likely(qc, threshold=0.5):
-    """(circuit, info): an X before and after each wait on every waiting qubit (neither measured there nor inside its
-    conditionals) whose noiseless probability of |1>, over the branches with their weights, is above `threshold`
-    (entangled qubits included: X X = I across a wait the qubit takes no part in). The pair is kept by a partial fence
-    at those waits only (the parked qubits and the wait's own qubits); no other barrier is added. Nothing to park: qc
-    itself. Checked here: the exact distribution of the classical bits unchanged (else ValueError)."""
+def _decide_likely(qc, threshold=0.5):
+    """(f, windows, plan) of park_likely: per window the waiting qubits with P(|1>) above threshold under "flip"
+    as (qubit, p1)."""
     f = fence_waits(qc, conditionals=True)
     wins = _windows(f)
     if not wins:
-        return qc, dict(parked=[], waits=0)
+        return f, wins, []
     _, sim = _simulate(f, [w["start"] for w in wins])
     act, pos = sim["act"], sim["pos"]
     n = len(act)
@@ -480,6 +493,25 @@ def park_likely(qc, threshold=0.5):
             if p1 > threshold + 1e-9:
                 flip.append((q, p1))
         plan.append(dict(w, flip=flip))
+    return f, wins, plan
+
+
+def park_likely_plan(qc, threshold=0.5):
+    """0.3.3rc1: park_likely's plan as anchored waits for psf_os.compiled.check_parked ([] when nothing is parked)."""
+    from psf_os.compiled import plan_anchors
+    f, wins, plan = _decide_likely(qc, threshold)
+    return plan_anchors(f, [dict(w, qubits=[q for q, _ in w["flip"]]) for w in plan], "likely") if wins else []
+
+
+def park_likely(qc, threshold=0.5):
+    """(circuit, info): an X before and after each wait on every waiting qubit (neither measured there nor inside its
+    conditionals) whose noiseless probability of |1>, over the branches with their weights, is above `threshold`
+    (entangled qubits included: X X = I across a wait the qubit takes no part in). The pair is kept by a partial fence
+    at those waits only (the parked qubits and the wait's own qubits); no other barrier is added. Nothing to park: qc
+    itself. Checked here: the exact distribution of the classical bits unchanged (else ValueError)."""
+    f, wins, plan = _decide_likely(qc, threshold)
+    if not wins:
+        return qc, dict(parked=[], waits=0)
     parked = [w for w in plan if w["flip"]]
     if not parked:
         return qc, dict(parked=[], waits=len(wins))

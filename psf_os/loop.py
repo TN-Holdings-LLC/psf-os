@@ -956,14 +956,24 @@ def _park_for(replay_from):
 
 
 def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=RUNGS, ledger=None, zip_path=None,
-          extra=None, paired=False, replay_from=None):
+          extra=None, paired=None, replay_from=None, cross_job=False):
     """A new night in OUT (refused if OUT exists). Device runs need zip_path; noise / k_max / budget are for dry runs.
     paired (loop-paired-2026-11-21; default False: the cfg and the night as before): the paired rule; the experiment's
     build reads the rule's candidates.
     replay_from (ledger-replay-2026-11-21; default None: the cfg and the night as before): a recorded night's folder
-    whose raw counts answer this dry night's jobs (replay_job); dry runs only, and never with noise."""
+    whose raw counts answer this dry night's jobs (replay_job); dry runs only, and never with noise.
+    0.3.3rc1 (the owner's decision of 2026-11-23): on the device the paired rule is the default (paired=None ->
+    True), since the same circuits drift between jobs (results/loopvar-night-2026-11-20: L 2, p 0.006). A device
+    night that decides across jobs (paired=False) is refused unless cross_job=True says so; the cfg then records
+    cross_job. Dry runs keep paired=None -> False, as before; recorded nights verify and replay from their own cfg."""
     if os.path.exists(out):
         raise SystemExit(f"{out} exists: use resume")
+    device_run = not dry_devdir
+    if paired is None:
+        paired = device_run                    # 0.3.3rc1: paired on the device by default
+    if device_run and not paired and not cross_job:
+        raise SystemExit("a device night that decides across jobs (paired=False) needs cross_job=True: the same "
+                         "circuits drift between jobs (loopvar 2026-11-20); the default on the device is paired")
     if replay_from and not dry_devdir:
         raise SystemExit("replay_from is for dry runs only (give dry_devdir, e.g. the record's fetch_in device)")
     if replay_from and noise:
@@ -981,6 +991,7 @@ def start(out, exp, dry_devdir=None, noise=None, k_max=None, budget=None, rungs=
                ledger=os.path.abspath(ledger) if ledger else None, zip=os.path.abspath(zip_path) if zip_path else None,
                started=now(), device=None, experiment=exp.name, **(extra or {}),
                **({"paired": True} if paired else {}),
+               **({"cross_job": True} if (device_run and not paired) else {}),
                **({"replay_from": os.path.abspath(replay_from)} if replay_from else {}),
                **({"park": True} if _park_for(replay_from) else {}),
                **({"park_likely": True} if _park_likely_for(replay_from) else {}))
@@ -1030,6 +1041,36 @@ def _split_digests(job_dir):
             circuits_digest([c for c, r in zip(cs, roles) if r == "sentinel"]))
 
 
+NEW_MANIFEST_KEYS = ("compiled",)
+
+
+def summary_line(rec_job, new_job, ma=None, mb=None):
+    """0.3.3rc1: one line on what changed between a recorded job and its rebuild, by the circuits' summaries (CZ,
+    depth, gate-sequence hash; psf_os.compiled.summary): the manifest's when it has them, else from circuits.qpy."""
+    from psf_os import compiled as CP
+
+    def get(job, m):
+        s = ((m or {}).get("compiled") or {}).get("summary")
+        if s is not None:
+            return s
+        from qiskit import qpy
+        return [CP.summary(c) for c in qpy.load(open(os.path.join(job, "circuits.qpy"), "rb"))]
+    try:
+        a, b = get(rec_job, ma), get(new_job, mb)
+    except Exception as exc:  # noqa: BLE001 - a QPY this qiskit cannot read
+        return f"summary: not read ({type(exc).__name__})"
+    names = [c["name"] for c in (ma or {}).get("cells", []) for _ in range(c["points"])]
+    return CP.summary_difference(a, b, names)
+
+
+def same_job_summary(rec_job, new_job):
+    """0.3.3rc1: same_job's (difference, how) and summary_line's one line on what changed (verify prints both)."""
+    diff, how = same_job(rec_job, new_job)
+    if how == "unreadable":
+        return diff, how
+    return diff, how, summary_line(rec_job, new_job)
+
+
 def same_job(rec_job, new_job):
     """(difference or None, how). circuits.qpy byte for byte; when the bytes differ (another qiskit / numpy / Python
     writes other bytes for the same circuits: the QPY format, an angle's last digits) the gates are compared instead
@@ -1051,11 +1092,17 @@ def same_job(rec_job, new_job):
         how = "test circuits' gates (the bytes differ: other versions)" + (
             "" if sa == sb else "; the ring sentinel differs (beside, not judged)")
     ma, mb = (json.load(open(os.path.join(x, "manifest.json"))) for x in (rec_job, new_job))
-    drop = (tuple(VERSION_KEYS) + ("psf_os_build",)) if how != "bytes" else ("written", "env", "psf_os_build")
+    base = how
+    for k in NEW_MANIFEST_KEYS:
+        # 0.3.3rc1: a key a recorded manifest does not have was added by a later psf-os beside the job (the circuits
+        # are compared above); it is left out of the comparison, as the build environment
+        if k not in ma:
+            mb.pop(k, None)
+    drop = (tuple(VERSION_KEYS) + ("psf_os_build",)) if base != "bytes" else ("written", "env", "psf_os_build")
     for m in (ma, mb):
         for k in drop:
             m.pop(k, None)
-        if how != "bytes":
+        if base != "bytes":
             # the per-cell byte hashes follow the versions too (2026-11-19, the workplace VS: a night built on one
             # machine and verified on another read DIFFERENT on /cells[*]/run_sha256 with the same gates)
             for cell in m.get("cells", []):
@@ -1083,9 +1130,10 @@ def _verify(out, exp, resim=False):
     unchecked = []
 
     def note(what, diff):
-        how = None
+        how, summ = None, None
         if isinstance(diff, tuple):
-            diff, how = diff
+            diff, how, *rest = diff
+            summ = rest[0] if rest else None
         if how == "unreadable":
             # not a difference and not the same: this machine cannot read the record (verify with a qiskit at least
             # as new as the one that wrote it)
@@ -1093,6 +1141,8 @@ def _verify(out, exp, resim=False):
             unchecked.append(what)
             return
         tail = f": {diff}" if diff is not None else (f" ({how})" if how and how != "bytes" else "")
+        if summ:
+            tail += f" [{summ}]"
         lines.append(f"{'SAME     ' if diff is None else 'DIFFERENT'} {what}" + tail)
         if diff is not None:
             bad.append(what)
@@ -1123,7 +1173,7 @@ def _verify(out, exp, resim=False):
             new = os.path.join(tmp, tag)
             _quiet(build, os.path.join(tmp, "x.txt"), devdir, new, bdry)
             j = job_of(rec)
-            note(f"{tag} job rebuilt", same_job(j, os.path.join(new, "job")) if j else "no job recorded")
+            note(f"{tag} job rebuilt", same_job_summary(j, os.path.join(new, "job")) if j else "no job recorded")
             if os.path.exists(os.path.join(rec, scores_file)):
                 note(f"{tag} re-scored", rescore(rec, score, scores_file, tmp))
         p1 = os.path.join(out, "RULE1.json")
@@ -1154,7 +1204,7 @@ def _verify(out, exp, resim=False):
             _quiet(exp.build, os.path.join(tmp, "x.txt"), devdir, new, os.path.join(out, f"RULE{k}.json"), bdry)
             j = job_of(rec)
             if j:
-                note(f"r{k} job rebuilt", same_job(j, os.path.join(new, "job")))
+                note(f"r{k} job rebuilt", same_job_summary(j, os.path.join(new, "job")))
             if os.path.exists(os.path.join(rec, "round_scores.json")):
                 note(f"r{k} re-scored", rescore(rec, exp.score, "round_scores.json", tmp, extra=("rule.json",)))
                 nxt = os.path.join(out, f"RULE{k + 1}.json")

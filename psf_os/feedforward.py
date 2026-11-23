@@ -759,12 +759,47 @@ class park_default:
 
 PARK_SINCE = (0, 3, 0)
 
+# 0.3.3rc1 (the owner's decision of 2026-11-23): a candidate is named X.Y.ZrcN (PEP 440) and becomes X.Y.Z only when
+# released, so a candidate and its release never share a name (0.3.1's candidate a6170e5 and its release 7caedaa both
+# said "0.3.1" and had other defaults). Versions are compared as PEP 440 orders them: X.Y.ZrcN comes before X.Y.Z.
+_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?(?:\.dev(\d+))?(?![\w.])")
+_PRE = {"a": 0, "b": 1, "rc": 2, None: 3}
+
+
+def version_key(version):
+    """The PEP 440 order of "X.Y.Z", "X.Y.ZrcN" (also aN, bN, .devN; a leading "v" allowed) as a tuple, or None for
+    anything else (a commit such as a164fc5)."""
+    m = _VERSION.match(str(version or "").strip())
+    if not m:
+        return None
+    major, minor, patch, pre, pre_n, dev = m.groups()
+    return (int(major), int(minor), int(patch), _PRE[pre], int(pre_n or 0), -1 if dev is None else int(dev))         if dev is None else (int(major), int(minor), int(patch), _PRE[pre], int(pre_n or 0), int(dev) - 10 ** 9)
+
+
+def is_candidate(version):
+    """True for a pre-release name (X.Y.ZrcN, aN, bN or .devN)."""
+    k = version_key(version)
+    return k is not None and (k[3] < 3 or k[5] != -1)
+
+
+def same_version(a, b):
+    """The exact name, rc included ("v" and spaces aside): 0.3.3rc1 is not 0.3.3, nor 0.3.3rc2."""
+    ka, kb = version_key(a), version_key(b)
+    if ka is None or kb is None:
+        return str(a or "").strip() == str(b or "").strip()
+    return ka == kb
+
+
+def _at_least(version, since):
+    k = version_key(version)
+    return k is not None and k >= tuple(since) + (3, 0, -1)
+
 
 def parks_by_default(version):
-    """Whether the psf-os named by `version` parks by default: a version "X.Y.Z" (or "vX.Y.Z") at 0.3.0 or later.
-    Anything else (an older version, a commit such as a164fc5) names a psf-os that did not park."""
-    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(version or "").strip())
-    return bool(m) and tuple(int(x) for x in m.groups()) >= PARK_SINCE
+    """Whether the psf-os named by `version` parks by default: a version at 0.3.0 or later by PEP 440's order (so
+    0.3.0rc1 is before 0.3.0 and does not count). Anything else (an older version, a commit such as a164fc5) names a
+    psf-os that did not park."""
+    return _at_least(version, PARK_SINCE)
 
 
 def resolve_park(park, declared=None):
@@ -789,8 +824,7 @@ def parks_likely_by_default(version):
     """Whether the psf-os named by `version` parks the likely value by default: a version at 0.3.1 or later (the
     released 0.3.1; its candidate a6170e5, also "0.3.1", had it off, and every build of it named park_likely
     explicitly). Anything else, a commit or an older version, did not."""
-    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(version or "").strip())
-    return bool(m) and tuple(int(x) for x in m.groups()) >= PARK_LIKELY_SINCE
+    return _at_least(version, PARK_LIKELY_SINCE)
 
 
 def resolve_park_likely(park_likely, declared=None):
@@ -912,11 +946,14 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     comp = Compiler(dev)
     prepared = []
     check_rows = {}
+    compiled_recs = {}
     for tag, qc, spec in items:
         a, qc, off, succ, spec = _prepare(tag, qc, spec)
+        bare = dict(ff=qc, off=off)                    # 0.3.3rc1: before psf-os's fences and parking
         if fence:
             from psf_os.footprint import fence_waits
             qc, off = fence_waits(qc, conditionals=True), fence_waits(off, conditionals=True)
+        orig = dict(ff=qc, off=off)                    # 0.3.3rc1: before parking
         park_rec, unparked = None, None
         if park and tag in park_skip:
             park_rec = {"park": False, "skipped": "park_skip"}
@@ -957,6 +994,18 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
             raise Refused(f"{tag}: acceptance failed: {chk}")
         if not any(n == "if_else" for n, _ in walk(arms["ff"])) and a["conditionals"]:
             raise Refused(f"{tag}: the compiler removed the conditionals")
+        # 0.3.3rc1: the parking checked in the compiled arms (refused if not kept), the waits as sent recorded
+        plans = _item_plans(orig, dict(park_rec or {}, _likely=likely_rec) if (park_rec or likely_rec) else None)
+        crec = {}
+        for arm, logical in (("ff", qc), ("off", off)):
+            before = None
+            if logical is not bare[arm]:
+                before = comp.run(on_device(bare[arm], chain, dev.num_qubits))
+            crec[arm] = _compiled_rec(f"{tag} ({arm})", dev, arms[arm], plans[arm], chain, arms[arm].num_clbits,
+                                      before)
+        compiled_recs[f"ff_{tag}"] = crec["ff"]
+        if tag not in ff_only:
+            compiled_recs[f"ff_{tag}_off"] = crec["off"]
         if record_checks == "record":
             check_rows[tag] = _check_row(tag, qc, off, arms)
             if park_rec is not None:
@@ -1030,6 +1079,7 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
     cover = _sentinel(dev, runs, shots, sentinel_spec,
                       cover=sorted({q for p in prepared for q in p[4]["chain"]}) if sentinel_over_test else None)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, allow_long_delay=allow_long_delay,
+                     compiled=dict(records=compiled_recs, note=COMPILED_NOTE),
                      **({"extra": dict(sentinel_cover=cover)} if cover is not None else {}),
                      build=dict(_build_rec(park, park_how, declared),
                                 **({"park_likely": park_likely if park_likely is True else sorted(park_likely)}
@@ -1048,6 +1098,61 @@ def build(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=None, chain
         rep["park"] = True
     json.dump(rep, open(os.path.join(out, "build.json"), "w"), indent=1, default=str)
     return rep
+
+
+COMPILED_NOTE = ("0.3.3rc1: per record and arm, the waits of the circuit as sent (compiled; noiseless, every branch: "
+                 "P(|1>) at the start and the largest during the wait, entangled in any branch; physical qubits), "
+                 "the parked qubits checked in the compiled circuit (psf_os.compiled.check_parked), the depth "
+                 "without and with psf-os's fences and parking, and with durations in the device record the lengths "
+                 "in dt and µs (lower bounds for the conditionals' waits: no decision latency in the record)")
+
+
+def _item_plans(orig, rec):
+    """{arm: anchored parking plan} of an item from its arms before parking (orig: {"ff": qc, "off": off}) and its
+    parking record (build's park record, or _park_prep's with "park_likely" inside; a likely record may also be given
+    as rec["_likely"]): the always-|1> plan on the arms as they were, the likely plan on the arms after that park."""
+    from psf_os.footprint import park_likely_plan, park_plan, park_waits
+    out = {}
+    likely = None
+    if rec:
+        likely = rec.get("_likely") or (rec.get("park_likely") if isinstance(rec.get("park_likely"), dict) else None)
+    for arm in ("ff", "off"):
+        c, plan = orig[arm], []
+        if c is None:
+            out[arm] = plan
+            continue
+        if rec and ((rec.get("arms") or {}).get(arm) or {}).get("parked"):
+            plan += park_plan(c)
+            c = park_waits(c)[0]
+        if likely and ((likely.get("arms") or {}).get(arm) or {}).get("parked"):
+            plan += park_likely_plan(c)
+        out[arm] = plan
+    return out
+
+
+def _compiled_rec(tag, dev, sent, plan, physical, nbits, before=None):
+    """The compiled check and record of one item's arm: refused (Refused) when the parking is not kept in the
+    compiled circuit; else dict(waits, park_checked, fences (when `before`, the arm compiled without psf-os's fences
+    and parking, is given), lengths (with durations in the device record))."""
+    from psf_os import compiled as CP
+    cc = restrict(sent, physical, list(range(nbits)))
+    try:
+        checked = CP.check_parked(cc, plan, tag=tag)
+    except ValueError as e:
+        raise Refused(str(e)) from None
+    out = dict(waits=CP.waits_record(cc, physical), park_checked=checked)
+    timing, step = getattr(dev, "timing", None), getattr(dev, "dt", None)
+    if before is not None:
+        f = dict(depth_before=before.depth(), depth_after=sent.depth())
+        lb, la = CP.lengths(before, timing, step), CP.lengths(sent, timing, step)
+        if la and "length_dt" in la and lb and "length_dt" in lb:
+            f.update(length_dt_before=lb["length_dt"], length_dt_after=la["length_dt"],
+                     length_us_before=lb["length_us"], length_us_after=la["length_us"])
+        out["fences"] = f
+    ln = CP.lengths(sent, timing, step)
+    if ln is not None:
+        out["lengths"] = ln
+    return out
 
 
 def _park_item(tag, qc, off):
@@ -1364,6 +1469,7 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     park_likely, likely_how, likely_guard = resolve_park_likely(park_likely, declared)
     if not park and likely_how == "default":
         park_likely = False                    # release-0.3.1: by default, the likely value is parked only with park
+    prep0 = prep                               # 0.3.3rc1: before parking
     prep, park_recs, unparked_prep = _park_prep(tags, prep, park, park_likely, likely_guard, declared)
     with_cond = [t for t, p in zip(tags, prep) if p[0]["conditionals"]]
     shield = None
@@ -1434,10 +1540,26 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
     bsets = [set(range(lo[i], hi[i])) for i in range(len(prep))]
     bundle_acceptance(arms, qsets, bsets)
     table = {}
+    compiled_recs = {f"ff_{tag}": {}, f"ff_{tag}_off": {}}
+    before = {}
+    if unparked_prep is not None:
+        for w, k in (("ff", 1), ("off", 2)):
+            before[w] = comp.run(on_device(_bundle_logical(unparked_prep, k, segs, lo, hi, N, nbits, multi), chain,
+                                           dev.num_qubits))
     for i, (t, p) in enumerate(zip(tags, prep)):
         a, qc, off, succ, spec = p
         phys = [chain[k] for k in segs[i]]
         bits = list(range(lo[i], hi[i]))
+        # 0.3.3rc1: the sub-item's parking checked in the compiled bundle, its waits as sent recorded
+        plans = _item_plans(dict(ff=prep0[i][1], off=prep0[i][2]), park_recs[i])
+        for w, cell in (("ff", f"ff_{tag}"), ("off", f"ff_{tag}_off")):
+            cc = restrict(arms[w], phys, bits)
+            from psf_os import compiled as CP
+            try:
+                checked = CP.check_parked(cc, plans[w], tag=f"{tag}/{t} ({w})")
+            except ValueError as e:
+                raise Refused(str(e)) from None
+            compiled_recs[cell][t] = dict(waits=CP.waits_record(cc, phys), park_checked=checked)
         alone = {w: comp.run(on_device(lg, phys, dev.num_qubits)) for w, lg in (("ff", qc), ("off", off))}
         alone["floor"] = floor_of(alone["ff"])
         for w in ("ff", "off", "floor"):
@@ -1463,7 +1585,15 @@ def build_bundle(dev, items, out, tag="pack", shots=4000, max_seconds=60, sentin
                       cover=sorted(q for t in tags for q in table[t]["qubits"]) if sentinel_over_test else None)
     if cover is not None:
         man_extra["sentinel_cover"] = cover
+    for w, cell in (("ff", f"ff_{tag}"), ("off", f"ff_{tag}_off")):
+        if w in before:
+            compiled_recs[cell]["_fences"] = dict(depth_before=before[w].depth(), depth_after=arms[w].depth())
+        ln = __import__("psf_os.compiled", fromlist=["lengths"]).lengths(arms[w], getattr(dev, "timing", None),
+                                                                          getattr(dev, "dt", None))
+        if ln is not None:
+            compiled_recs[cell]["_lengths"] = ln
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, extra=man_extra,
+                     compiled=dict(records=compiled_recs, note=COMPILED_NOTE),
                      allow_long_delay=allow_long_delay,
                      build=dict(_build_rec(park, park_how, declared),
                                 **({"park_likely": park_likely if park_likely is True else sorted(park_likely),
@@ -1619,6 +1749,7 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
     park_likely, likely_how, likely_guard = resolve_park_likely(park_likely, declared)
     if not park and likely_how == "default":
         park_likely = False                    # release-0.3.1: by default, the likely value is parked only with park
+    prep0 = prep                               # 0.3.3rc1: before parking
     prep, park_recs, unparked_prep = _park_prep(tags, prep, park, park_likely, likely_guard, declared)
     sizes = [p[0]["n"] for p in prep]
     pl = bundle_place(dev, sizes)
@@ -1674,6 +1805,21 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
                 if max(abs(dm.get(k, 0.0) - dr.get(k, 0.0)) for k in set(dm) | set(dr)) > 1e-12:
                     raise Refused(f"pack_fixed: {t} (off) has another exact distribution packed than alone")
         table[t] = dict(segment=segs[i], qubits=phys[i], bit_offset=offs[i], clbits=a["clbits"])
+    # 0.3.3rc1: every item's parking checked in its compiled ff arm and in the packed off arm, the waits recorded
+    compiled_recs = {f"ff_{FIXED_PACK_TAG}_off": {}}
+    for i, t in enumerate(tags):
+        plans = _item_plans(dict(ff=prep0[i][1], off=prep0[i][2]), park_recs[i])
+        b0 = None
+        if unparked_prep is not None:
+            b0 = comp.run(on_device(unparked_prep[i][1], phys[i], dev.num_qubits))
+        compiled_recs[f"ff_{t}"] = _compiled_rec(f"{t} (ff)", dev, ff[t], plans["ff"], phys[i], ff[t].num_clbits, b0)
+        from psf_os import compiled as CP
+        cc = restrict(packed["off"], phys[i], list(range(offs[i], offs[i + 1])))
+        try:
+            checked = CP.check_parked(cc, plans["off"], tag=f"{t} (packed off)")
+        except ValueError as e:
+            raise Refused(str(e)) from None
+        compiled_recs[f"ff_{FIXED_PACK_TAG}_off"][t] = dict(waits=CP.waits_record(cc, phys[i]), park_checked=checked)
     runs = os.path.join(out, "runs")
     os.makedirs(runs)
     rep_items = {}
@@ -1701,6 +1847,7 @@ def build_pack_fixed(dev, items, out, shots=4000, max_seconds=60, sentinel_spec=
                   mapping={k: chain[k] for k in labels}, shots=shots)
     _sentinel(dev, runs, shots, sentinel_spec)
     man = J.assemble(dev, runs, os.path.join(out, "job"), max_seconds=max_seconds, allow_long_delay=allow_long_delay,
+                     compiled=dict(records=compiled_recs, note=COMPILED_NOTE),
                      extra=dict(pack_fixed=dict(items=tags, packed=["off", "floor"]),
                                 conditionals_per_item={t: p[0]["conditionals"] for t, p in zip(tags, prep)}),
                      build=dict(_build_rec(park, park_how, declared),

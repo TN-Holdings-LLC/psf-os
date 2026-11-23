@@ -195,6 +195,35 @@ def delays_to_dt(circuits, dt):
     return out
 
 
+def delay_grid_problems(circuits, timing):
+    """0.3.3rc1: the delays (in dt, top level and inside conditional blocks) that do not fit the device's time grid
+    by its timing constraints (Device.timing): a length that is not a whole multiple of `granularity` or of
+    `pulse_alignment`, or a non-zero length below `min_length`. [] without constraints (every record before 0.3.3rc1:
+    nothing is checked, as before)."""
+    con = (timing or {}).get("constraints") or {}
+    if not con:
+        return []
+    g = int(con.get("granularity") or 1)
+    a = int(con.get("pulse_alignment") or 1)
+    m = int(con.get("min_length") or 0)
+    bad = []
+
+    def rec(c, k):
+        for x in c.data:
+            op = x.operation
+            if op.name == "if_else":
+                for b in op.blocks:
+                    if b is not None:
+                        rec(b, k)
+            elif op.name == "delay" and op.unit == "dt":
+                d = int(op.duration)
+                if d % g or d % a or (0 < d < m):
+                    bad.append(dict(pub=k, dt=d))
+    for k, c in enumerate(circuits):
+        rec(c, k)
+    return bad
+
+
 def delay_record(circuits, dt):
     """Per circuit holding a delay: its delay in dt (the longest sum over one qubit; every delay is in dt by
     delays_to_dt) and, with a dt, in microseconds. Returns None when no circuit holds a delay."""
@@ -213,7 +242,7 @@ def delay_record(circuits, dt):
     return per or None
 
 
-def assemble(dev, runs, out, max_seconds=60, extra=None, build=None, allow_long_delay=False):
+def assemble(dev, runs, out, max_seconds=60, extra=None, build=None, allow_long_delay=False, compiled=None):
     """One job folder from every valid record in `runs`: circuits.qpy (in record order, references after the echo
     points) and manifest.json (cells, pubs, shots, the device record). Refuses an over-long job by the time model.
     v0.2 prototype (2026-11-18): the manifest also records the build environment (env, build_env()) and any `extra`
@@ -222,7 +251,12 @@ def assemble(dev, runs, out, max_seconds=60, extra=None, build=None, allow_long_
     delay is longer than DELAY_LIMIT_US is refused before anything is written unless allow_long_delay; the delays are
     priced in the time model (qpu_seconds, delay_seconds). A job without a delay gets the manifest and the seconds it
     had before. Without a dt in the device record a delay in dt is recorded in dt only, neither limited nor priced
-    (the records before 0.3.2 rebuild unchanged)."""
+    (the records before 0.3.2 rebuild unchanged).
+    0.3.3rc1 (candidate): with timing constraints in the device record, a delay off the device's time grid is refused
+    before anything is written (delay_grid_problems). Every manifest gets "compiled": per circuit a summary of the
+    circuit as sent (psf_os.compiled.summary: CZ, depth, the SHA-256 of its gate sequence) and, from the builders that
+    pass `compiled`, the per-record checks (waits, parking checked, the fences' cost). loop.same_job leaves the key out
+    when a recorded manifest has none, so every night recorded before verifies as before."""
     from qiskit import qpy
     if os.path.exists(out):
         raise FileExistsError(f"{out} exists: a job folder is never overwritten")
@@ -256,6 +290,11 @@ def assemble(dev, runs, out, max_seconds=60, extra=None, build=None, allow_long_
             raise RuntimeError(f"{len(long_)} circuit(s) hold a delay over {DELAY_LIMIT_US:g} us (the longest "
                                f"{w['us']:g} us = {w['dt']} dt at dt {step:g} s, circuit {w['pub']}); shorten the "
                                "delays or pass allow_long_delay=True")
+    grid = delay_grid_problems(circuits, getattr(dev, "timing", None))
+    if grid:
+        w = grid[0]
+        raise RuntimeError(f"{len(grid)} delay(s) off the device's time grid {dev.timing['constraints']} (the first: "
+                           f"{w['dt']} dt in circuit {w['pub']}): write the delay as a multiple of the granularity")
     seconds = qpu_seconds(len(circuits), shots, delay_s)
     if seconds > max_seconds:
         import math
@@ -295,6 +334,9 @@ def assemble(dev, runs, out, max_seconds=60, extra=None, build=None, allow_long_
     # setting and the declared psf-os (beside the job: loop.same_job leaves it out, as the build environment)
     from psf_os import __version__
     man["psf_os_build"] = dict(version=__version__, **(build or {}))
+    # 0.3.3rc1: the circuits as sent, summarised (CZ, depth, gate-sequence hash), and the builder's checks
+    from psf_os.compiled import summary
+    man["compiled"] = dict(summary=[summary(c) for c in circuits], **(compiled or {}))
     for k, v in (extra or {}).items():
         if k in man:
             raise RuntimeError(f"assemble: extra field {k} would overwrite the manifest's own")
