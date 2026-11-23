@@ -10,10 +10,10 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** 0.3.3rc1 (candidate, 2026-11-23; not released): the parking checked in the compiled circuit, the
+**Status.** 0.3.3 (2026-11-24): the parking checked in the compiled circuit, the
 waits and the fences' cost recorded, lengths of time in the device record, delays on the device's time grid, and the
 loop paired by default on the device; see below. A candidate is named `X.Y.ZrcN` and becomes `X.Y.Z` only when
-released. Released: 0.3.2 (2026-11-23): dt in the device record, delays in dt and µs with a limit, and the delays
+released. 0.3.3 includes 0.3.2 (2026-11-23; tagged, not released on its own): dt in the device record, delays in dt and µs with a limit, and the delays
 priced in the time model. Before it: 0.3.1 (2026-11-22): the likely value of a
 waiting qubit parked in |0> by default (behind a partial fence), on top of 0.3.0's parking, paired loop and
 replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before it: 0.3.0 (2026-11-21; parking, the paired loop,
@@ -133,7 +133,7 @@ Versions behind each result: [`results/ENVIRONMENT.md`](https://github.com/TN-Ho
 The experiment a loop runs is given from outside (circuits, scores, the first rule); the lab notebook's `gpu/os_loop.py`
 is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
 
-## The circuit as sent, checked (0.3.3rc1, candidate)
+## The circuit as sent, checked (0.3.3)
 
 - **Parking checked after compiling.** Every build follows each compiled arm noiselessly, branch by branch, through
   every wait. A qubit parked because it was in |1> on every branch must have P(|1>) 0 during the wait; one parked

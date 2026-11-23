@@ -49,7 +49,7 @@ def _likely():
 # ------------------------------------------------------------------------------------------------ the name
 
 def test_the_candidate_is_named_rc_and_compared_by_pep440():
-    assert psf_os.__version__ == "0.3.3rc1" and FF.is_candidate(psf_os.__version__)
+    assert psf_os.__version__ == "0.3.3" and not FF.is_candidate(psf_os.__version__) and FF.is_candidate("0.3.3rc1")
     assert FF.version_key("0.3.3rc1") < FF.version_key("0.3.3") < FF.version_key("0.3.4rc1")
     assert FF.same_version("v0.3.3rc1", "0.3.3rc1") and not FF.same_version("0.3.3rc1", "0.3.3")
     assert not FF.same_version("0.3.3rc1", "0.3.3rc2")
@@ -105,9 +105,19 @@ def test_timing_reads_lengths_of_time_only():
     assert Dv.timing_of(b.target, None) is None
     dev = Dv.fetch_fake("FakeFez")
     assert dev.timing == t
-    text = json.dumps(dev.to_json()).lower()
+    # The record's keys name what was read; a calibration field would show as a key. (Searching the JSON text matched
+    # the fetch's timestamp: "...t11:20..." contains "t1".)
+    def keys(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                yield str(k).lower()
+                yield from keys(v)
+        elif isinstance(x, list):
+            for v in x:
+                yield from keys(v)
+    names = list(keys(dev.to_json()))
     for word in ("error", "t1", "t2", "frequency", "readout"):
-        assert word not in text, word
+        assert not any(word in k for k in names if not k.isdigit() and "," not in k), word
     old = Dv.Device(**{k: v for k, v in dev.to_json().items() if k != "timing"})
     assert "timing" not in old.to_json()                     # a record without timing keeps its JSON
 

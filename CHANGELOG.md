@@ -1,8 +1,11 @@
 # Changelog
 
-## 0.3.3rc1 (candidate, 2026-11-23; not tagged, not released)
+## 0.3.3 (2026-11-24)
 
-Checks of the circuit as sent, and the device's lengths of time. Every circuit that 0.3.2 builds, 0.3.3rc1 builds byte
+Released as 0.3.3rc1 was checked (9c4563b), with its name changed; it includes 0.3.2, which was tagged and not
+released on its own.
+
+Checks of the circuit as sent, and the device's lengths of time. Every circuit that 0.3.2 builds, 0.3.3rc1 (and so 0.3.3) builds byte
 for byte the same (the six recorded nights of 2026-11-21 and 2026-11-22 rebuilt with both: every file the same); what
 is new is checked and recorded beside the job.
 
