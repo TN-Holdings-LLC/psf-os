@@ -277,3 +277,12 @@ def test_dry_runs_keep_their_default(tmp_path):
     Dv.fetch_fake("FakeFez").save(d)
     LP.start(str(tmp_path / "n"), Exp(), dry_devdir=d)
     assert "paired" not in json.load(open(str(tmp_path / "n" / "run.json")))
+
+
+def test_version_order_dev_before_pre_releases():
+    # PEP 440: a bare .devN comes before aN of the same release; .post is not accepted (None).
+    order = ["0.3.0.dev1", "0.3.0a1", "0.3.0b2", "0.3.0rc1.dev2", "0.3.0rc1", "0.3.0", "0.3.1rc1", "0.3.1"]
+    assert sorted(reversed(order), key=FF.version_key) == order
+    assert FF.is_candidate("0.3.0.dev1") and not FF.parks_by_default("0.3.0.dev1")
+    assert FF.version_key("0.3.0.post1") is None
+

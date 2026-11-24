@@ -5,16 +5,20 @@
 Released as 0.3.3rc1 was checked (9c4563b), with its name changed; it includes 0.3.2, which was tagged and not
 released on its own.
 
-Checks of the circuit as sent, and the device's lengths of time. Every circuit that 0.3.2 builds, 0.3.3rc1 (and so 0.3.3) builds byte
-for byte the same (the six recorded nights of 2026-11-21 and 2026-11-22 rebuilt with both: every file the same); what
-is new is checked and recorded beside the job.
+Checks of the circuit as sent, and the device's lengths of time. On the six recorded nights of 2026-11-21 and 22
+(device records without timing constraints), 0.3.2 and 0.3.3rc1 built the same files byte for byte (run records, QPY,
+circuits.qpy, build.json, checks.json) and the same manifests but for the new `compiled` key, the time and the build
+environment. With timing constraints in the device record, a delay off the grid is refused; a build whose parking the
+compiler did not keep is refused. What is new is checked and recorded in the job's manifest (`manifest["compiled"]`).
 
 ### The name of a candidate
 
 - **A candidate is named `X.Y.ZrcN`** (PEP 440) and becomes `X.Y.Z` only when it is released. 0.3.1's candidate
   (a6170e5, the likely value not parked by default) and its release (7caedaa, parked) both said "0.3.1"; this cannot
   happen again.
-- Versions are compared in PEP 440's order (`feedforward.version_key`): `0.3.3rc1` comes before `0.3.3`. The safety
+- Versions are compared in PEP 440's order (`feedforward.version_key`): `0.3.3rc1` comes before `0.3.3`, and a bare
+  `.devN` before every pre-release (`0.3.0.dev1` < `0.3.0a1`; corrected in the release after the workplace reading of
+  2026-11-24, which found it placed between rc and final); a post-release name is not accepted. The safety
   checks of a declared version (`parks_by_default`, `parks_likely_by_default`) use that order, so a candidate is never
   taken for its release; `feedforward.same_version` compares the exact name, rc included.
 
@@ -46,7 +50,8 @@ is new is checked and recorded beside the job.
   compiler still sees no duration (`map_free_target`). A record without timing builds as before and is written
   without the key.
 - **Delays on the device's time grid.** With timing constraints in the device record, a delay whose length is not a
-  multiple of the granularity and the pulse alignment, or is shorter than min_length, is refused before the job is
+  multiple of the granularity and the pulse alignment, or is shorter than min_length (a zero length aside), is refused
+  before the job is
   written (`job.delay_grid_problems`).
 - **The conditionals' waits estimated.** With durations in the device record, `compiled.lengths` gives each compiled
   arm's length and, per conditional, the measurement it reads and its longest block, in dt: a lower bound of the wait,

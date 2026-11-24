@@ -138,14 +138,16 @@ is the one used for the RUS chain. Changes in [`CHANGELOG.md`](CHANGELOG.md).
 - **Parking checked after compiling.** Every build follows each compiled arm noiselessly, branch by branch, through
   every wait. A qubit parked because it was in |1> on every branch must have P(|1>) 0 during the wait; one parked
   because it was more likely in |1>, below 0.5. Otherwise the build is refused.
-- **Recorded beside the job** (`manifest["compiled"]`): per wait and waiting qubit, P(|1>) and whether it is entangled;
+- **Recorded in the job's manifest** (`manifest["compiled"]`): per wait and waiting qubit, P(|1>) and whether it is entangled;
   the depth without and with psf-os's fences; per circuit a summary (CZ, depth, gate-sequence hash) that `verify`
   compares across versions in one line.
 - **Lengths of time.** The device record may hold the durations of x, sx, cz, measure and reset and the timing
   constraints (lengths of time only, never an error number). A delay off the device's time grid is refused; each
   conditional's wait is estimated as a lower bound (the decision latency is in no record).
 - **The loop pairs on the device by default.** Deciding across jobs needs `cross_job=True`.
-- Every circuit 0.3.2 builds is built byte for byte the same.
+- On the six recorded nights of 2026-11-21 and 22, 0.3.2 and 0.3.3 built the same files byte for byte, the manifests
+  aside (the new `compiled` key, the time, the environment). With timing constraints in the device record, a delay off
+  the grid is refused; a build whose parking the compiler did not keep is refused.
 
 ## Time units and the charge for delays (0.3.2)
 
@@ -241,8 +243,11 @@ any of them is the owner's decision.
 
 ## Tests
 
-`TOQB_DIR=<psf-os-lab-notebook checkout> python -m pytest -q` (the variable keeps the notebook's old name; 0.1.0:
-286 passed, 1 skipped, with the notebook checked out and the optional pieces installed). On a 2-core machine the
+`TOQB_DIR=<psf-os-lab-notebook checkout> python -m pytest -q` (the variable keeps the notebook's old name; 0.3.3:
+415 passed, 1 skipped, with the notebook checked out and the optional pieces installed; 386 passed and 30 skipped
+without the notebook). Checked with qiskit 2.5.2, qiskit-aer 0.17.2 and qiskit-ibm-runtime 0.49.0 (home) and qiskit
+2.6.1, qiskit-aer 0.18.2 and qiskit-ibm-runtime 0.51.0 (workplace; 0.51 warns that `SamplerV2` is deprecated, which
+the next version is to replace). No upper bound is pinned. On a 2-core machine the
 whole suite takes about 23 minutes, 10 of them one test; `-m "not slow"` leaves out the 23 tests marked `slow` (20 s
 or more each), and `PSF_OS_HEAVY=1` adds the one heavy tensor-network test, skipped by default.
 

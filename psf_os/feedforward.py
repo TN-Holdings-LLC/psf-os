@@ -768,12 +768,17 @@ _PRE = {"a": 0, "b": 1, "rc": 2, None: 3}
 
 def version_key(version):
     """The PEP 440 order of "X.Y.Z", "X.Y.ZrcN" (also aN, bN, .devN; a leading "v" allowed) as a tuple, or None for
-    anything else (a commit such as a164fc5)."""
+    anything else (a commit such as a164fc5, or a post-release such as "0.3.0.post1", which is not accepted).
+
+    A ".devN" with no pre-release comes before every pre-release of the same X.Y.Z (0.3.0.dev1 < 0.3.0a1), as in PEP 440;
+    a ".devN" after a pre-release comes before that pre-release (0.3.0rc1.dev2 < 0.3.0rc1)."""
     m = _VERSION.match(str(version or "").strip())
     if not m:
         return None
     major, minor, patch, pre, pre_n, dev = m.groups()
-    return (int(major), int(minor), int(patch), _PRE[pre], int(pre_n or 0), -1 if dev is None else int(dev))         if dev is None else (int(major), int(minor), int(patch), _PRE[pre], int(pre_n or 0), int(dev) - 10 ** 9)
+    rank = _PRE[pre] if (pre is not None or dev is None) else -1
+    dev_key = -1 if dev is None else int(dev) - 10 ** 9
+    return (int(major), int(minor), int(patch), rank, int(pre_n or 0), dev_key)
 
 
 def is_candidate(version):
