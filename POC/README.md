@@ -64,7 +64,7 @@ the papers listed at the end, and the notebook's `results/` folders named in the
   results that keep at least 0.293 of the exact pattern read. Essential: below 0.293 a result cannot read by
   construction, so only the converse is measured; and dividing raw values by a measured share changed few verdicts
   and made some results worse.
-  <!-- src: notebook notes/paper9/paper9.tex abstract ("179", "160 of the 166 results with r >= 0.293", "0.293") -->
+  <!-- src: notebook notes/paper9/paper9.tex abstract ("179", "160 of" / "the 166 results with $r \ge 0.293$ read", "0.293") -->
 - **Real-time control beyond any correction of the uncontrolled circuit** (Paper 10). Headline: iterative phase
   estimation at n = 4 on ibm_marrakesh, 0.903 against a correction ceiling of 0.471. Essential: of 57 declared
   predictions over four nights, 37 held and 20 failed (all reported); what the device keeps of the noiseless value
@@ -90,7 +90,8 @@ mitigation, deep circuits often do not read; psf-os says so instead of correctin
 
 ```bash
 git clone https://github.com/TN-Holdings-LLC/psf-os
-pip install -e "psf-os[sim]"
+pip install -e "psf-os[sim]"                              # behind a network that re-signs TLS, pip may need your
+                                                          # organisation's certificate settings
 python psf-os/POC/quickstart.py                          # writes ./quickstart_out
 ```
 
@@ -102,7 +103,9 @@ laptop can simulate 72 qubits; the device scan uses the full echo. It then shows
 functions: a waiting qubit in |1> parked in |0> with the exact distribution unchanged (no noise is simulated for this
 step), and a device night that would decide across jobs refused.
 
-One run with psf-os 0.3.3 (144 s on a 2-core machine that was running other simulations at the same time), output unedited:
+One run with psf-os 0.3.3, output unedited. It took 144 s on one machine (qiskit 2.5.2, Aer 0.17.2) and 774 s on
+another (qiskit 2.6.2, Aer 0.18.4), each running other simulations at the same time; the output was the same on both
+but for the time:
 
 ```
 SIMULATION with planted defects on FakeFez -- not a device result
@@ -117,7 +120,7 @@ SIMULATION with planted defects on FakeFez -- not a device result
 7. done in 144 s on this machine (psf-os 0.3.3). SIMULATION with planted defects on FakeFez -- not a device result.
 ```
 
-A perfect 1.000 here only means the planted errors were the only noise and were avoided; on a device every ring has
+A perfect 1.000 here means that the planted errors were the whole of the noise and were avoided; on a device every ring has
 its own noise, as the numbers above show. **Simulation, not a device result.**
 
 ## Run it on your own IBM Quantum account
@@ -144,10 +147,11 @@ psf-os entrance score --out RUN --answers answers.json                     # ans
   delays.
 
 For example, 8 circuits with a 4-circuit sentinel at 1,000 shots: about 5.8 s by the formula and 6.7 s by the model.
-The notebook's latest declared job, 173 circuits at 1,000 shots, comes to 49 s and 56 s.
+The notebook's latest declared job, 169 circuits at 1,000 shots, came to 48.1 s by the formula and 54.7 s by the
+model; IBM charged 47 s.
 <!-- src: psf-os psf_os/job.py qpu_seconds; notebook prereg/ohm_ruler3_night_2026-11-25.md "2.6 s + 0.000269 s x
-     circuits x shots"; 12 x 1000: 2.6 + 3.228 = 5.83, 0.432 + 3.24 + 3 = 6.67; 173 x 1000: 2.6 + 46.54 = 49.1,
-     6.23 + 46.71 + 3 = 55.9 -->
+     circuits x shots" and its table ("169", "48.1", "54.7"); results/ohm-ruler3-night-2026-11-25/README.md
+     ("47 s charged"); 12 x 1000: 2.6 + 3.228 = 5.83, 0.432 + 3.24 + 3 = 6.67 -->
 
 ## A proof-of-concept evaluation
 
