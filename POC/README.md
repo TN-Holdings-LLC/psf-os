@@ -147,11 +147,11 @@ psf-os entrance score --out RUN --answers answers.json                     # ans
   delays.
 
 For example, 8 circuits with a 4-circuit sentinel at 1,000 shots: about 5.8 s by the formula and 6.7 s by the model.
-The notebook's latest declared job, 169 circuits at 1,000 shots, came to 48.1 s by the formula and 54.7 s by the
-model; IBM charged 47 s.
-<!-- src: psf-os psf_os/job.py qpu_seconds; notebook prereg/ohm_ruler3_night_2026-11-25.md "2.6 s + 0.000269 s x
-     circuits x shots" and its table ("169", "48.1", "54.7"); results/ohm-ruler3-night-2026-11-25/README.md
-     ("47 s charged"); 12 x 1000: 2.6 + 3.228 = 5.83, 0.432 + 3.24 + 3 = 6.67 -->
+The notebook's latest declared job, 173 circuits at 1,000 shots, came to 49.1 s by the formula and 55.9 s by the
+model; IBM charged 48 s.
+<!-- src: psf-os psf_os/job.py qpu_seconds; notebook prereg/ohm_ruler4_night_2026-11-26.md "2.6 s + 0.000269 s x
+     circuits x shots" and its table ("173", "49.1", "55.9"); results/ohm-ruler4-night-2026-11-26/README.md (job
+     table: "173", "55.9", "48"); 12 x 1000: 2.6 + 3.228 = 5.83, 0.432 + 3.24 + 3 = 6.67 -->
 
 ## A proof-of-concept evaluation
 
