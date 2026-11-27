@@ -5,6 +5,9 @@
 
 A self-checking layer between a user's circuit and an IBM heavy-hex device, without the calibration map.
 
+**Proof of concept:** to evaluate psf-os on your own computation (a five-minute fake-device run, the device numbers,
+the request form), see [`POC/`](POC/).
+
 It places a circuit by formula (a ring by the rule, a 2D circuit by translation of its own pattern), adds checks made
 of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), keeps a list of what it found dead,
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
