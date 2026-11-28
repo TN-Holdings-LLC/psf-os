@@ -28,7 +28,10 @@ A self-checking layer between a user's circuit and an IBM heavy-hex device, with
 **Proof of concept:** to evaluate psf-os on your own computation (a five-minute fake-device run, the device numbers,
 the request form), see [`POC/`](POC/).
 
-It places a circuit by formula (a ring by the rule, a 2D circuit by translation of its own pattern), adds checks made
+It places a circuit by formula (a ring by the rule, a 2D circuit by translation of its own pattern), with no search:
+a 2D pattern lands edge for edge on the device's couplers, so no SWAP is added (a pattern that does not fit is refused,
+not routed), and `rzz(+-pi/2)` is written as exactly one CZ; a folded ring uses fixed CZ+SWAP blocks, and the cubic
+lattice prototype fixed swap schedules (at several times what a search-based router needs). It adds checks made
 of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), keeps a list of what it found dead,
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
@@ -73,19 +76,10 @@ computed and sealed before the runs.
 - P5: the kicked Ising model in the form of IBM's 2023 utility experiment, on the device's own lattice (151 qubits on
   ibm_marrakesh, 153 on ibm_fez), theta = 0.4, 0.8, 1.0, t = 2-8 (up to 1,360 CZ).
 
-| device | READS | AGREES (\|M - exact\| <= 0.05) | BEATS (the better trivial guess) |
-|---|---|---|---|
-| ibm_marrakesh | 22 / 22 | 19 / 22 | 19 / 22 |
-| ibm_fez | 22 / 22 | 18 / 22 | 20 / 22 |
-
-- **Benchmark number:** on both devices the 2D problems at theta 0.8 and 1.0 agree with the exact answer to t = 8
-  (151-153 qubits; worst difference on fez 0.023), without correction.
-- **Device user's number:**
-  - theta 0.4 misses by -0.04 to -0.07 on both devices, the same size: its answers are near 1, and a loss of a few
-    percent is enough to lose to "every qubit reads 1".
-  - In P4 the one site that carries the signal falls behind with depth: 0.30 against 0.41 at t = 16.
-  - One day, two devices 25 minutes apart, both in a good state (floor 0.96). The spread from day to day is not
-    measured yet.
+The table and the two numbers are at the top of this README. Conditions behind them:
+- One day, two devices 25 minutes apart, both in a good state (floor 0.96). The spread from day to day is not
+  measured yet.
+- Why theta 0.4 misses: its answers are near 1, and a loss of a few percent is enough to lose to "every qubit reads 1".
 - The batch ran end to end with no hand step; on fez the entrance moved P4 off a failed coupler by itself.
 - Records: psf-os-lab-notebook [`practice-2026-11-04`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/tree/main/results/practice-2026-11-04) and
   [`practice-fez-2026-11-04`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/tree/main/results/practice-fez-2026-11-04). The same evening, a correction by the floor and the mirror
@@ -100,6 +94,24 @@ were sealed (hashes committed) before release; raw values, no correction, failur
 [`results/daily/RECORD.md`](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook/blob/main/results/daily/RECORD.md). Each line gives the declared verdict and, beside
 it, the retained share of the signal (M / M_exact) and the normalised error: the declared criterion is an absolute
 difference, so a large answer can DIFFER while keeping as much signal as a small one that AGREES.
+
+## Papers
+
+TN Holdings' preprints on Zenodo that use psf-os or the work it grew from (the records behind them are in
+[psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook)):
+
+| paper | date | title or subject | DOI |
+|---|---|---|---|
+| 11 | 2026-11-24 | Where a Qubit Waits: Rules for Real-Time Control from Declared Device Tests on IBM Heron | [10.5281/zenodo.24496368](https://doi.org/10.5281/zenodo.24496368) |
+| 10 | 2026-11-19 | Decisions No Correction of the Uncontrolled Circuit Can Reach: Real-Time Control on IBM Heron, Declared Before the Data | [10.5281/zenodo.24367001](https://doi.org/10.5281/zenodo.24367001) |
+| 9 | 2026-11-16 | What Makes Raw Quantum Dynamics Readable? The Share of Signal Kept, Across 179 Results on IBM Heron | [10.5281/zenodo.24278888](https://doi.org/10.5281/zenodo.24278888) |
+| 8 | 2026-11-11 | Readable Quantum Dynamics Without Error Mitigation: Dual-Unitary Chains up to 91 Qubits and 3D Lattice Tests | [10.5281/zenodo.24136512](https://doi.org/10.5281/zenodo.24136512) |
+| 7 | 2026-11-08 | Exact answers, no map, no mitigation: user-written circuits through a placement-only OS on IBM Heron r2 devices | [10.5281/zenodo.24046673](https://doi.org/10.5281/zenodo.24046673) |
+| 6 | | the ring's self-check layer (1D) | [10.5281/zenodo.23883938](https://doi.org/10.5281/zenodo.23883938) |
+| 5 (v1.1) | | readable depth without the calibration map | [10.5281/zenodo.23827536](https://doi.org/10.5281/zenodo.23827536) |
+| 4 | | formula schedules on heavy-hex | [10.5281/zenodo.23665575](https://doi.org/10.5281/zenodo.23665575) |
+
+Papers 1 to 5 are also in [psf-zero `docs/papers/`](https://github.com/TN-Holdings-LLC/psf-zero/tree/main/docs/papers).
 
 ## Reproduce
 
