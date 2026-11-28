@@ -97,21 +97,24 @@ difference, so a large answer can DIFFER while keeping as much signal as a small
 
 ## Papers
 
-TN Holdings' preprints on Zenodo that use psf-os or the work it grew from (the records behind them are in
-[psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook)):
+TN Holdings' preprints on Zenodo, from the compiler work psf-os grew out of (1 to 4) to the device layer itself (5 to
+11); the records behind 5 to 11 are in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook).
+Papers 1 to 6 are also listed, with their earlier versions, in
+[psf-zero's README](https://github.com/TN-Holdings-LLC/psf-zero#papers).
 
-| paper | date | title or subject | DOI |
+| paper | date | title | DOI |
 |---|---|---|---|
 | 11 | 2026-11-24 | Where a Qubit Waits: Rules for Real-Time Control from Declared Device Tests on IBM Heron | [10.5281/zenodo.24496368](https://doi.org/10.5281/zenodo.24496368) |
 | 10 | 2026-11-19 | Decisions No Correction of the Uncontrolled Circuit Can Reach: Real-Time Control on IBM Heron, Declared Before the Data | [10.5281/zenodo.24367001](https://doi.org/10.5281/zenodo.24367001) |
 | 9 | 2026-11-16 | What Makes Raw Quantum Dynamics Readable? The Share of Signal Kept, Across 179 Results on IBM Heron | [10.5281/zenodo.24278888](https://doi.org/10.5281/zenodo.24278888) |
-| 8 | 2026-11-11 | Readable Quantum Dynamics Without Error Mitigation: Dual-Unitary Chains up to 91 Qubits and 3D Lattice Tests | [10.5281/zenodo.24136512](https://doi.org/10.5281/zenodo.24136512) |
-| 7 | 2026-11-08 | Exact answers, no map, no mitigation: user-written circuits through a placement-only OS on IBM Heron r2 devices | [10.5281/zenodo.24046673](https://doi.org/10.5281/zenodo.24046673) |
-| 6 | | the ring's self-check layer (1D) | [10.5281/zenodo.23883938](https://doi.org/10.5281/zenodo.23883938) |
-| 5 (v1.1) | | readable depth without the calibration map | [10.5281/zenodo.23827536](https://doi.org/10.5281/zenodo.23827536) |
-| 4 | | formula schedules on heavy-hex | [10.5281/zenodo.23665575](https://doi.org/10.5281/zenodo.23665575) |
-
-Papers 1 to 5 are also in [psf-zero `docs/papers/`](https://github.com/TN-Holdings-LLC/psf-zero/tree/main/docs/papers).
+| 8 | 2026-11-11 | Readable Quantum Dynamics Without Error Mitigation: Dual-Unitary Chains up to 91 Qubits and 3D Lattice Tests on IBM Heron Devices | [10.5281/zenodo.24136512](https://doi.org/10.5281/zenodo.24136512) |
+| 7 | 2026-11-08 | Exact Answers, No Map, No Mitigation: User-Written Circuits through a Placement-Only OS on IBM Heron r2 Devices | [10.5281/zenodo.24046673](https://doi.org/10.5281/zenodo.24046673) |
+| 6 | 2026-11-02 | What Sets the Readable Depth of a Placed Ring, and How Far a Self-Checking Layer Pushes It: Scan, Register, Avoid and Repair on Three Heavy-Hex Devices Without the Calibration Map | [10.5281/zenodo.23883938](https://doi.org/10.5281/zenodo.23883938) |
+| 5 (v1.1) | 2026-10-31 | Readable Depth Without the Calibration Map: Formula Placement on Heavy-Hex Devices, and a Defect the Calibration Does Not Show | [10.5281/zenodo.23827536](https://doi.org/10.5281/zenodo.23827536) |
+| 4 (v1.3) | 2026-10-31 | Folding a Ring onto Heavy-Hex: Formula-Built Schedules with Provable Gate Counts, and What Their Signal Shows on Twins and Devices | [10.5281/zenodo.23826764](https://doi.org/10.5281/zenodo.23826764) |
+| 3 (v1.3) | 2026-10-31 | When a Quantum Compiler Looks Like a Better Learner: Confounds in Quantum Machine Learning Comparisons | [10.5281/zenodo.23826596](https://doi.org/10.5281/zenodo.23826596) |
+| 2 (v2) | 2026-09-26 | PSF-Zero: An Analytic Two-Qubit Gate Synthesizer Combined with a Verified, Ordering-Aware Layout Search | [10.5281/zenodo.22978090](https://doi.org/10.5281/zenodo.22978090) |
+| 1 (v2) | 2026-09-26 | Ordering Sensitivity in Subgraph-Isomorphism Layout Search | [10.5281/zenodo.22977930](https://doi.org/10.5281/zenodo.22977930) |
 
 ## Reproduce
 
