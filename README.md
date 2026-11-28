@@ -5,6 +5,26 @@
 
 A self-checking layer between a user's circuit and an IBM heavy-hex device, without the calibration map.
 
+**In three lines.**
+- Circuits of up to 153 qubits (the kicked Ising model of IBM's 2023 utility experiment, up to 1,360 CZ) came back
+  within 0.05 of the exact answer to t = 8 at theta 0.8 and 1.0 on ibm_fez and ibm_marrakesh, with no error
+  mitigation, no correction and no calibration map; every answer was sealed before the run.
+- Every job carries its own checks (a floor and a mirror; on rings, a sentinel), so each answer says whether it can be
+  read and how much of the signal the device kept.
+- Where it misses, the same table says so: theta 0.4 misses by 0.04 to 0.07, and deep circuits often come back as
+  "does not read".
+
+| device (2026-11-04, 22 circuits, 33 to 153 qubits) | READS | AGREES (\|M - exact\| <= 0.05) | BEATS (the better trivial guess) |
+|---|---|---|---|
+| ibm_marrakesh | 22 / 22 | 19 / 22 | 19 / 22 |
+| ibm_fez | 22 / 22 | 18 / 22 | 20 / 22 |
+
+- **Benchmark number:** the 2D problems at theta 0.8 and 1.0 agree with the exact answer to t = 8 on both devices
+  (151-153 qubits; worst difference on fez 0.023).
+- **Device user's number:** theta 0.4 misses by -0.04 to -0.07 on both devices; in the 33-qubit chain the one site that
+  carries the signal falls behind with depth (0.30 against 0.41 at t = 16); one day on two devices, the spread from day
+  to day not measured yet. Details: [First device results](#first-device-results-practice-problems-through-the-user-entrance-2026-11-04).
+
 **Proof of concept:** to evaluate psf-os on your own computation (a five-minute fake-device run, the device numbers,
 the request form), see [`POC/`](POC/).
 
@@ -13,20 +33,9 @@ of the user's own circuit to the same job (a floor, a mirror, a ring sentinel), 
 and returns an answer card. It does not read a calibration quality number: it uses the coupling graph and the
 elements marked as failed.
 
-**Status.** 0.3.3 (2026-11-24): the parking checked in the compiled circuit, the
-waits and the fences' cost recorded, lengths of time in the device record, delays on the device's time grid, and the
-loop paired by default on the device; see below. A candidate is named `X.Y.ZrcN` and becomes `X.Y.Z` only when
-released. 0.3.3 includes 0.3.2 (2026-11-23; tagged, not released on its own): dt in the device record, delays in dt and µs with a limit, and the delays
-priced in the time model. Before it: 0.3.1 (2026-11-22): the likely value of a
-waiting qubit parked in |0> by default (behind a partial fence), on top of 0.3.0's parking, paired loop and
-replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before it: 0.3.0 (2026-11-21; parking, the paired loop,
-replay) and 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop). Archived on Zenodo:
-every release
-[10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (resolves to the latest), 0.1.1
-[10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
-their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook) (named TOQB until
-2026-11-12; the old links redirect); every device result below was declared (hash and time locked in git) before its
-data existed.
+**Status.** 0.3.3 (2026-11-24); the release history is under [Releases](#releases). Every device result below was
+declared (hash and time locked in git) before its data existed; the records live in
+[psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook).
 
 ## What it does differently, and what it does not do
 
@@ -237,6 +246,23 @@ FF.build(dev, items, out, declared="a164fc5")  # refused: the declared psf-os di
 | L4 repair | `psf_os.repair` | local frame flip, mirror-type circuits only |
 | L5 sentinel | `psf_os.sentinel` | M6 prototype: the rule's echo on the user's ring in the same job (4 circuits, no references); CLEAN / WEAK / DEAD by the registry's rules; findings enter the next registry file as gray entries of the day |
 | L6 job | `psf_os.job` | a logical circuit in; the assembled job and a report out |
+
+## Releases
+
+0.3.3 (2026-11-24): the parking checked in the compiled circuit, the
+waits and the fences' cost recorded, lengths of time in the device record, delays on the device's time grid, and the
+loop paired by default on the device; see the sections above. A candidate is named `X.Y.ZrcN` and becomes `X.Y.Z` only when
+released. 0.3.3 includes 0.3.2 (2026-11-23; tagged, not released on its own): dt in the device record, delays in dt and µs with a limit, and the delays
+priced in the time model. Before it: 0.3.1 (2026-11-22): the likely value of a
+waiting qubit parked in |0> by default (behind a partial fence), on top of 0.3.0's parking, paired loop and
+replay; changes in [`CHANGELOG.md`](CHANGELOG.md). Before it: 0.3.0 (2026-11-21; parking, the paired loop,
+replay) and 0.2.0 (2026-11-19; real-time control, the build rules and the compounding loop). Archived on Zenodo:
+every release
+[10.5281/zenodo.24211404](https://doi.org/10.5281/zenodo.24211404) (resolves to the latest), 0.1.1
+[10.5281/zenodo.24211405](https://doi.org/10.5281/zenodo.24211405). The experiments behind it, and
+their records, live in [psf-os-lab-notebook](https://github.com/TN-Holdings-LLC/psf-os-lab-notebook) (named TOQB until
+2026-11-12; the old links redirect); every device result in this README was declared (hash and time locked in git) before its
+data existed.
 
 ## Rules
 
