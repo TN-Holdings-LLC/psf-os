@@ -11,7 +11,7 @@ A self-checking layer between a user's circuit and an IBM heavy-hex device, with
   mitigation, no correction and no calibration map; every answer was sealed before the run.
 - Every job carries its own checks (a floor and a mirror; on rings, a sentinel), so each answer says whether it can be
   read and how much of the signal the device kept.
-- Where it misses, the same table says so: theta 0.4 misses by 0.04 to 0.07, and deep circuits often come back as
+- Where it misses, the same table says so: theta 0.4 misses by 0.06 to 0.07 from t = 4, and deep circuits often come back as
   "does not read".
 
 | device (2026-11-04, 22 circuits, 33 to 153 qubits) | READS | AGREES (\|M - exact\| <= 0.05) | BEATS (the better trivial guess) |
@@ -21,7 +21,7 @@ A self-checking layer between a user's circuit and an IBM heavy-hex device, with
 
 - **Benchmark number:** the 2D problems at theta 0.8 and 1.0 agree with the exact answer to t = 8 on both devices
   (151-153 qubits; worst difference on fez 0.023).
-- **Device user's number:** theta 0.4 misses by -0.04 to -0.07 on both devices; in the 33-qubit chain the one site that
+- **Device user's number:** theta 0.4 misses by -0.06 to -0.07 from t = 4 on both devices (t = 2 agrees); in the 33-qubit chain the one site that
   carries the signal falls behind with depth (0.30 against 0.41 at t = 16); one day on two devices, the spread from day
   to day not measured yet. Details: [First device results](#first-device-results-practice-problems-through-the-user-entrance-2026-11-04).
 
